@@ -1,41 +1,12 @@
-# Environment
-.env
-.env.local
-
-# Dependencies
-node_modules/
 .venv/
-venv/
-
-# Python
-__pycache__/
+.env
 *.pyc
-*.pyo
-.pytest_cache/
-
-# Data (user-specific, generated at runtime)
+__pycache__/
+frontend/node_modules/
+data/
 *.db
-data/*.jsonl
-data/active_session.json
-data/.jarvis_output.txt
-
-# Certificates
+*.sqlite
 *.pem
-
-# Build
-dist/
-.vite/
-frontend/.vite/
-
-# IDE / System
+*.key
 .DS_Store
-.vscode/
-.idea/
-.claude/
-.arch/
-
-# Desktop overlay
-desktop-overlay/node_modules/
-context/
-*.db-shm
-*.db-wal
+frontend/dist/
