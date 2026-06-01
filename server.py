@@ -91,6 +91,9 @@ GEMINI_MODELS = [
 
 DESKTOP_PATH = Path.home() / "Desktop"
 
+# Atomic memory store (zero API, TF-IDF locale)
+from memory_store import get_memory, remember as _mem_remember, recall as _mem_recall
+
 _workspace_cache: dict = {"content": "", "mtime": 0.0}
 
 def _load_workspace_context() -> str:
@@ -1617,9 +1620,10 @@ async def generate_response(
     if last_response:
         system += f'\n\nULTIMA RISPOSTA:\n"{last_response[:150]}"'
 
-    memory_ctx = build_memory_context(text)
+    # Atomic memory retrieval — 5 fatti rilevanti, ~130 token (vs ~594 naive)
+    memory_ctx = _mem_recall(text, top_k=5)
     if memory_ctx:
-        system += f"\n\nMEMORIA:\n{memory_ctx}"
+        system += f"\n\n{memory_ctx}"
 
     history_lines = []
     for msg in conversation_history[-10:]:
@@ -1983,72 +1987,98 @@ def _scan_projects_sync() -> list[dict]:
 
 
 def detect_action_fast(text: str) -> dict | None:
-    """Keyword-based action detection — ONLY for short, obvious commands.
-
-    Everything else goes to the LLM which uses [ACTION:X] tags when it decides
-    to act based on conversational understanding.
-    """
+    """Local Intent Router — gestisce l'80% delle richieste senza API.
+    Zero token. Zero latenza. Filosofia: Tencent Marvis + Cursor local-first.
+    Pattern in italiano E inglese — WhyJarv capisce entrambi."""
     t = text.lower().strip()
     words = t.split()
 
-    # Only trigger on SHORT, clear commands (< 12 words)
-    if len(words) > 12:
-        return None  # Long messages are conversation, not commands
+    if len(words) > 15:
+        return None  # frasi lunghe → LLM
 
-    # Screen requests — checked BEFORE project matching to prevent misrouting
-    if any(p in t for p in ["look at my screen", "what's on my screen", "whats on my screen",
-                             "what am i looking at", "what do you see", "see my screen",
-                             "what's running on my", "whats running on my", "check my screen"]):
+    # ── SCHERMO ──────────────────────────────────────────────────────────────
+    if any(p in t for p in [
+        "look at my screen", "what's on my screen", "what do you see",
+        "cosa vedi", "guarda lo schermo", "cosa c'è sullo schermo",
+        "cosa sto facendo", "cosa ho aperto", "what am i looking at",
+        "what's open", "what apps", "cosa è aperto", "app aperte"
+    ]):
         return {"action": "describe_screen"}
 
-    # Terminal / Claude Code — explicit open requests
-    if any(w in t for w in ["open claude", "start claude", "launch claude", "run claude"]):
+    # ── TERMINAL / CLAUDE ────────────────────────────────────────────────────
+    if any(p in t for p in [
+        "open claude", "apri claude", "apri terminal", "open terminal",
+        "launch claude", "avvia claude", "start claude", "avvia terminal"
+    ]):
         return {"action": "open_terminal"}
 
-    # Show recent build
-    if any(w in t for w in ["show me what you built", "pull up what you made", "open what you built"]):
-        return {"action": "show_recent"}
-
-    # Screen awareness — explicit look/see requests
-    if any(p in t for p in ["what's on my screen", "whats on my screen", "what do you see",
-                             "can you see my screen", "look at my screen", "what am i looking at",
-                             "what's open", "whats open", "what apps are open"]):
-        return {"action": "describe_screen"}
-
-    # Calendar — explicit schedule requests
-    if any(p in t for p in ["what's my schedule", "whats my schedule", "what's on my calendar",
-                             "whats on my calendar", "do i have any meetings", "any meetings",
-                             "what's next on my calendar", "my schedule today",
-                             "what do i have today", "my calendar", "upcoming meetings",
-                             "next meeting", "what's my next meeting"]):
+    # ── CALENDARIO ───────────────────────────────────────────────────────────
+    if any(p in t for p in [
+        "calendario", "schedule", "riunioni", "meetings", "agenda",
+        "cosa ho oggi", "what do i have", "prossimo evento", "next meeting",
+        "what's on my calendar", "cosa ho in programma", "impegni",
+        "ho riunioni", "any meetings", "orario"
+    ]):
         return {"action": "check_calendar"}
 
-    # Mail — explicit email requests
-    if any(p in t for p in ["check my email", "check my mail", "any new emails", "any new mail",
-                             "unread emails", "unread mail", "what's in my inbox",
-                             "whats in my inbox", "read my email", "read my mail",
-                             "any emails", "any mail", "email update", "mail update"]):
+    # ── EMAIL ─────────────────────────────────────────────────────────────────
+    if any(p in t for p in [
+        "email", "mail", "posta", "inbox", "messaggi non letti",
+        "nuove email", "any new emails", "check my email",
+        "controlla le email", "controlla la posta"
+    ]):
         return {"action": "check_mail"}
 
-    # Dispatch / build status check
-    if any(p in t for p in ["where are we", "where were we", "project status", "how's the build",
-                             "hows the build", "status update", "status report", "where is that",
-                             "how's it going with", "hows it going with", "is it done",
-                             "is that done", "what happened with"]):
+    # ── BUILD STATUS ─────────────────────────────────────────────────────────
+    if any(p in t for p in [
+        "dove siamo", "status", "com'è andata", "è finito", "is it done",
+        "what happened", "cosa ha fatto", "risultato", "progress",
+        "project status", "how's the build", "è pronto", "finito"
+    ]):
         return {"action": "check_dispatch"}
 
-    # Task list check
-    if any(p in t for p in ["what's on my list", "whats on my list", "my tasks", "my to do",
-                             "my todo", "what do i need to do", "open tasks", "task list"]):
+    # ── TASK ─────────────────────────────────────────────────────────────────
+    if any(p in t for p in [
+        "task", "todo", "cose da fare", "lista", "my tasks",
+        "what do i need to do", "cosa devo fare", "promemoria", "reminder"
+    ]):
         return {"action": "check_tasks"}
 
-    # Usage / cost check
-    if any(p in t for p in ["usage", "how much have you cost", "how much am i spending",
-                             "what's the cost", "whats the cost", "api cost", "token usage",
-                             "how expensive", "what's my bill"]):
-        return {"action": "check_usage"}
+    # ── APRI APPLICAZIONI ────────────────────────────────────────────────────
+    _open_apps = {
+        "safari": "Safari", "chrome": "Google Chrome", "firefox": "Firefox",
+        "spotify": "Spotify", "finder": "Finder", "vscode": "Visual Studio Code",
+        "ableton": "Ableton Live", "logic": "Logic Pro", "terminal": "Terminal",
+        "obsidian": "Obsidian", "xcode": "Xcode", "figma": "Figma",
+        "slack": "Slack", "discord": "Discord", "zoom": "Zoom",
+        "note": "Notes", "appunti": "Notes", "messages": "Messages",
+        "messaggi": "Messages", "imessage": "Messages",
+    }
+    for keyword, app_name in _open_apps.items():
+        if keyword in t and any(v in t for v in ["apri", "open", "lancia", "avvia", "start"]):
+            return {"action": "open_app", "app": app_name}
 
-    return None  # Everything else goes to the LLM for conversational routing
+    # ── MUSICA ───────────────────────────────────────────────────────────────
+    if any(p in t for p in ["play music", "metti musica", "play spotify",
+                             "metti spotify", "pause", "stop music", "ferma la musica"]):
+        return {"action": "music", "cmd": "play" if "play" in t or "metti" in t else "pause"}
+
+    # ── MEMORIA ISTANTANEA ───────────────────────────────────────────────────
+    if t.startswith(("ricordati che", "ricorda che", "remember that", "nota che", "note that")):
+        fact = t.split("che", 1)[-1].strip() if "che" in t else t.split("that", 1)[-1].strip()
+        return {"action": "remember_fact", "fact": fact}
+
+    # ── METEO ────────────────────────────────────────────────────────────────
+    if any(p in t for p in ["meteo", "tempo", "weather", "piove", "temperature",
+                             "fa caldo", "fa freddo", "che tempo fa"]):
+        return {"action": "check_weather"}
+
+    # ── COSA HAI COSTRUITO ───────────────────────────────────────────────────
+    if any(p in t for p in ["show me what you built", "cosa hai costruito",
+                             "mostrami cosa hai fatto", "pull up what you made"]):
+        return {"action": "show_recent"}
+
+    return None
 
 
 # -- Action Handlers -------------------------------------------------------
@@ -2702,8 +2732,39 @@ async def voice_handler(ws: WebSocket):
                             response_text = format_tasks_for_voice(tasks)
                         elif action["action"] == "check_usage":
                             response_text = get_usage_summary()
+                            g = _limiters["groq"].usage()
+                            gm = _limiters["gemini"].usage()
+                            response_text += f" Groq {g['rpm']} RPM. Gemini {gm['rpm']} RPM."
+
+                        # ── Nuovi handler del Local Intent Router ──
+                        elif action["action"] == "open_app":
+                            app = action.get("app", "")
+                            script = f'tell application "{app}" to activate'
+                            await asyncio.create_subprocess_exec("osascript", "-e", script)
+                            response_text = f"Aperto."
+
+                        elif action["action"] == "music":
+                            cmd = action.get("cmd", "play")
+                            script = ('tell application "Spotify" to play'
+                                      if cmd == "play"
+                                      else 'tell application "Spotify" to pause')
+                            await asyncio.create_subprocess_exec("osascript", "-e", script)
+                            response_text = "Fatto." if cmd == "play" else "Messa in pausa."
+
+                        elif action["action"] == "remember_fact":
+                            fact = action.get("fact", "").strip()
+                            if fact:
+                                _mem_remember(fact, tags=["explicit", "command"])
+                                response_text = "Ricordato."
+                            else:
+                                response_text = "Cosa devo ricordare?"
+
+                        elif action["action"] == "check_weather":
+                            w = _ctx_cache.get("weather", "")
+                            response_text = w if w else "Dati meteo non disponibili."
+
                         else:
-                            response_text = "Understood."
+                            response_text = "Capito."
                     else:
                         # ── FAST PATH: Groq streaming diretto (PersonaPlex-style) ──
                         # Prima frase parla in <200ms. Nessun silenzio imbarazzante.
@@ -2850,8 +2911,9 @@ async def voice_handler(ws: WebSocket):
                                     except ValueError:
                                         pass
                                 elif embedded_action["action"] == "remember":
-                                    remember(embedded_action["target"].strip(), mem_type="fact", importance=7)
-                                    log.info(f"Memory stored: {embedded_action['target'][:60]}")
+                                    fact = embedded_action["target"].strip()
+                                    _mem_remember(fact, tags=["explicit"])
+                                    log.info(f"Memory stored: {fact[:60]}")
                                 elif embedded_action["action"] == "create_note":
                                     target = embedded_action["target"]
                                     if "|||" in target:
@@ -2899,9 +2961,38 @@ async def voice_handler(ws: WebSocket):
                     else:
                         summary_update_pending = False
 
-                # Extract memories in background via Gemini (doesn't block response)
-                if GEMINI_API_KEY and len(user_text) > 15:
-                    asyncio.create_task(extract_memories(user_text, response_text, None))
+                # Estrai fatti atomici dalla conversazione (background, zero blocco)
+                # Usa Groq 8b — velocissimo, quasi gratis
+                async def _extract_atomic_facts(u: str, r: str):
+                    try:
+                        if not GROQ_API_KEY or len(u) < 10:
+                            return
+                        c = _get_groq_client()
+                        if not c:
+                            return
+                        prompt = (
+                            f"Estrai 1-3 fatti atomici utili da questa conversazione.\n"
+                            f"Formato: una riga per fatto, massimo 15 parole ciascuno.\n"
+                            f"Solo fatti concreti su Edoardo, i suoi progetti o preferenze.\n"
+                            f"Se non c'è nulla di utile, rispondi 'NONE'.\n\n"
+                            f"Edoardo: {u}\nWhyJarv: {r}"
+                        )
+                        loop = asyncio.get_event_loop()
+                        resp = await loop.run_in_executor(None, lambda: c.chat.completions.create(
+                            model="llama-3.1-8b-instant",
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=80, temperature=0.2,
+                        ).choices[0].message.content.strip())
+                        if resp and resp != "NONE":
+                            for line in resp.splitlines():
+                                line = line.strip().lstrip("- •")
+                                if line and len(line) > 5:
+                                    _mem_remember(line, tags=["auto"])
+                    except Exception:
+                        pass
+
+                if len(user_text) > 15:
+                    asyncio.create_task(_extract_atomic_facts(user_text, response_text))
 
                 # TTS — invia testo al browser, Apple speechSynthesis parla in <50ms
                 tts = strip_markdown_for_tts(response_text)

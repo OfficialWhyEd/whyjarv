@@ -95,6 +95,37 @@ function transition(newState: State) {
 // Voice input
 // ---------------------------------------------------------------------------
 
+// ── PersonaPlex-style Backchanneling ─────────────────────────────────────────
+// Mentre Edoardo parla, WhyJarv dà segnali di ascolto attivo.
+// Non interrompe mai — parla SOLO nelle pause naturali (>800ms silenzio).
+// Questo è il vero segreto di PersonaPlex: sembra vivo perché reagisce.
+const BACKCHANNELS_IT = ["Sì.", "Capisco.", "Mm.", "Certo.", "Ok."];
+let _bcTimer: ReturnType<typeof setTimeout> | null = null;
+let _lastInterimLen = 0;
+let _bcCooldown = false;
+
+function _triggerBackchannel() {
+  if (_bcCooldown || currentState !== "listening") return;
+  const bc = BACKCHANNELS_IT[Math.floor(Math.random() * BACKCHANNELS_IT.length)];
+  const utt = new SpeechSynthesisUtterance(bc);
+  const voice = getItalianVoice();
+  if (voice) utt.voice = voice;
+  utt.rate = 1.05; utt.pitch = 1.0; utt.volume = 0.7;  // più sottile, non invadente
+  speechSynthesis.speak(utt);
+  _bcCooldown = true;
+  setTimeout(() => { _bcCooldown = false; }, 4000);  // cooldown 4s tra backchannels
+}
+
+function _onInterimForBackchannel(text: string) {
+  if (_bcTimer) clearTimeout(_bcTimer);
+  const len = text.length;
+  // Se il testo si è stabilizzato (pausa naturale) → backchannel dopo 900ms
+  if (len > 20 && len === _lastInterimLen) {
+    _bcTimer = setTimeout(_triggerBackchannel, 900);
+  }
+  _lastInterimLen = len;
+}
+
 const WAKE_WORDS = ["let's start", "lets start", "inizia", "hey jarvis", "whyjarv"];
 let isAwake = false;
 
@@ -133,11 +164,15 @@ const voiceInput = createVoiceInput(
   (msg: string) => {
     showError(msg);
   },
-  // Sistema 4: interim transcript → speculative pre-computation
+  // Sistema 4 + Backchanneling
   (interim: string) => {
-    if (isAwake && interim.split(" ").length >= 4) {
+    if (!isAwake) return;
+    // Speculative pre-computation
+    if (interim.split(" ").length >= 4) {
       socket.send({ type: "transcript", text: interim, isFinal: false });
     }
+    // PersonaPlex backchanneling — segnali di ascolto nelle pause naturali
+    _onInterimForBackchannel(interim);
   }
 );
 
