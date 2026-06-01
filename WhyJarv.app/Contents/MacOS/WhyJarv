@@ -1,27 +1,23 @@
 #!/bin/bash
-# WhyJarv macOS App Launcher
-# Trova la directory del progetto e avvia il menu bar Python
+# WhyJarv — App Launcher
+# usa Resources/menu_bar.py per bypassare TCC su ~/Documents
 
-# Risolvi il percorso reale (segui symlink)
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+LOG="/tmp/whyjarv_launch.log"
+exec > "$LOG" 2>&1
+echo "[$(date)] WhyJarv launcher avviato"
 
-# Se lanciato da /Applications, cerca WhyJarv in ~/Documents
-if [[ "$APP_DIR" == *"/Applications"* ]]; then
-    PROJECT_DIR="$HOME/Documents/WhyJarv"
-else
-    PROJECT_DIR="$APP_DIR"
-fi
+BUNDLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RESOURCES_DIR="$BUNDLE_DIR/Resources"
+PYTHON="$HOME/.whyjarv-venv/bin/python3"
 
-cd "$PROJECT_DIR" || exit 1
+echo "[$(date)] Python: $PYTHON"
+echo "[$(date)] Resources: $RESOURCES_DIR"
 
-# Attiva virtualenv
-PYTHON="$PROJECT_DIR/.venv/bin/python3"
-if [ ! -f "$PYTHON" ]; then
-    # Crea venv se mancante
-    python3 -m venv "$PROJECT_DIR/.venv"
-    "$PROJECT_DIR/.venv/bin/pip" install -q fastapi "uvicorn[standard]" websockets google-genai rumps pyobjc-framework-Cocoa
-fi
+# Carica .env via osascript (accesso completo a ~/Documents)
+ENV_EXPORTS=$(osascript -e 'do shell script "cat ~/Documents/WhyJarv/.env 2>/dev/null | grep -v \"^#\" | grep \"=\""' 2>/dev/null)
+while IFS='=' read -r k v; do
+    [ -n "$k" ] && export "$k"="$v"
+done <<< "$ENV_EXPORTS"
 
-# Avvia menu bar app (gestisce tutto: backend, browser, icona)
-exec "$PYTHON" "$PROJECT_DIR/menu_bar.py"
+echo "[$(date)] Avvio menu_bar.py da bundle Resources..."
+exec "$PYTHON" "$RESOURCES_DIR/menu_bar.py"
