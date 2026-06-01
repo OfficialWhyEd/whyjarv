@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>JARVIS</title>
+    <title>WhyJarv</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -33,8 +33,35 @@
     </div>
 
     <div id="status-text"></div>
-    <div id="jarvis-label">JARVIS</div>
+    <div id="jarvis-label">WHYJARV</div>
     <div id="error-text"></div>
+
+    <!-- HUD Panels -->
+    <div class="hud-panel hud-tl" id="hud-tl">
+      <div class="hud-title">WHYJARV SYS</div>
+      <div class="hud-row"><span class="hud-label">CORE</span><span class="hud-val hud-active">● ACTIVE</span></div>
+      <div class="hud-row"><span class="hud-label">VOICE</span><span class="hud-val hud-active">● READY</span></div>
+      <div class="hud-row"><span class="hud-label">STATE</span><span class="hud-val" id="hud-state">IDLE</span></div>
+    </div>
+    <div class="hud-panel hud-tr" id="hud-tr">
+      <div class="hud-title">VOICE</div>
+      <div class="hud-row"><span class="hud-label">STT</span><span class="hud-val">APPLE</span></div>
+      <div class="hud-row"><span class="hud-label">TTS</span><span class="hud-val">NATIVE</span></div>
+      <div class="hud-row"><span class="hud-label">AI</span><span class="hud-val hud-active">GEMINI+CLAUDE</span></div>
+    </div>
+    <div class="hud-panel hud-bl" id="hud-bl">
+      <div class="hud-title">MCP LIVE</div>
+      <div class="hud-row"><span class="hud-label">▸</span><span class="hud-val">ClickUp</span></div>
+      <div class="hud-row"><span class="hud-label">▸</span><span class="hud-val">Gmail</span></div>
+      <div class="hud-row"><span class="hud-label">▸</span><span class="hud-val">Calendar</span></div>
+      <div class="hud-row"><span class="hud-label">▸</span><span class="hud-val">Obsidian</span></div>
+    </div>
+    <div class="hud-panel hud-br" id="hud-br">
+      <div class="hud-title">SESSION</div>
+      <div class="hud-row"><span class="hud-label">USER</span><span class="hud-val">@whyed</span></div>
+      <div class="hud-row"><span class="hud-label">BUILD</span><span class="hud-val hud-active">v1.0</span></div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

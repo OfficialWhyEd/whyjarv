@@ -1,3 +1,15 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400&display=swap');
+
+:root {
+  --void:    #08090e;
+  --void2:   #0e1018;
+  --paper:   #f0ede8;
+  --dim:     #6a6860;
+  --signal:  #c94b25;
+  --signal2: #e8603a;
+  --line:    rgba(255,255,255,0.06);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -8,8 +20,19 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #050508;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--void);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  pointer-events: none;
+  opacity: 0.028;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
 }
 
 #orb-canvas {
@@ -25,11 +48,12 @@ html, body {
   bottom: 40px;
   left: 50%;
   transform: translateX(-50%);
-  color: rgba(14, 165, 233, 0.5);
-  font-size: 13px;
-  letter-spacing: 2px;
-  text-transform: lowercase;
-  font-weight: 300;
+  color: rgba(201, 75, 37, 0.7);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 400;
   transition: opacity 0.5s ease;
   pointer-events: none;
   z-index: 10;
@@ -40,11 +64,11 @@ html, body {
   bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
-  color: rgba(14, 165, 233, 0.2);
-  font-size: 10px;
-  letter-spacing: 4px;
+  color: rgba(201, 75, 37, 0.25);
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.3em;
   text-transform: uppercase;
-  font-weight: 300;
   pointer-events: none;
   z-index: 10;
 }
@@ -61,10 +85,10 @@ html, body {
 #controls button {
   width: 36px;
   height: 36px;
-  border: 1px solid rgba(14, 165, 233, 0.15);
+  border: 1px solid rgba(201, 75, 37, 0.15);
   border-radius: 8px;
-  background: rgba(14, 165, 233, 0.05);
-  color: rgba(14, 165, 233, 0.4);
+  background: rgba(201, 75, 37, 0.05);
+  color: rgba(201, 75, 37, 0.4);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -73,9 +97,9 @@ html, body {
 }
 
 #controls button:hover {
-  background: rgba(14, 165, 233, 0.12);
-  color: rgba(14, 165, 233, 0.7);
-  border-color: rgba(14, 165, 233, 0.3);
+  background: rgba(201, 75, 37, 0.12);
+  color: rgba(201, 75, 37, 0.7);
+  border-color: rgba(201, 75, 37, 0.3);
 }
 
 #controls button.muted {
@@ -88,7 +112,7 @@ html, body {
   top: 58px;
   right: 16px;
   background: rgba(10, 10, 15, 0.95);
-  border: 1px solid rgba(14, 165, 233, 0.15);
+  border: 1px solid rgba(201, 75, 37, 0.15);
   border-radius: 8px;
   padding: 4px;
   z-index: 20;
@@ -101,7 +125,7 @@ html, body {
   padding: 8px 16px;
   border: none;
   background: none;
-  color: rgba(14, 165, 233, 0.5);
+  color: rgba(201, 75, 37, 0.5);
   font-size: 12px;
   letter-spacing: 1px;
   text-align: left;
@@ -111,8 +135,8 @@ html, body {
 }
 
 #menu-dropdown button:hover {
-  background: rgba(14, 165, 233, 0.1);
-  color: rgba(14, 165, 233, 0.8);
+  background: rgba(201, 75, 37, 0.1);
+  color: rgba(201, 75, 37, 0.8);
 }
 
 #error-text {
@@ -167,7 +191,7 @@ html, body {
   max-width: 100%;
   height: 100%;
   background: rgba(8, 10, 18, 0.92);
-  border-left: 1px solid rgba(0, 212, 255, 0.12);
+  border-left: 1px solid rgba(201, 75, 37, 0.12);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   transform: translateX(100%);
@@ -186,7 +210,7 @@ html, body {
   justify-content: space-between;
   align-items: center;
   padding: 20px 24px;
-  border-bottom: 1px solid rgba(0, 212, 255, 0.08);
+  border-bottom: 1px solid rgba(201, 75, 37, 0.08);
 }
 
 .settings-header h2 {
@@ -195,16 +219,16 @@ html, body {
   font-weight: 400;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: rgba(0, 212, 255, 0.7);
+  color: rgba(201, 75, 37, 0.7);
 }
 
 .settings-close {
   width: 32px;
   height: 32px;
-  border: 1px solid rgba(0, 212, 255, 0.15);
+  border: 1px solid rgba(201, 75, 37, 0.15);
   border-radius: 6px;
-  background: rgba(0, 212, 255, 0.05);
-  color: rgba(0, 212, 255, 0.5);
+  background: rgba(201, 75, 37, 0.05);
+  color: rgba(201, 75, 37, 0.5);
   font-size: 18px;
   cursor: pointer;
   display: flex;
@@ -214,19 +238,19 @@ html, body {
 }
 
 .settings-close:hover {
-  background: rgba(0, 212, 255, 0.12);
-  color: rgba(0, 212, 255, 0.8);
-  border-color: rgba(0, 212, 255, 0.3);
+  background: rgba(201, 75, 37, 0.12);
+  color: rgba(201, 75, 37, 0.8);
+  border-color: rgba(201, 75, 37, 0.3);
 }
 
 .settings-welcome {
   padding: 16px 24px;
-  border-bottom: 1px solid rgba(0, 212, 255, 0.08);
+  border-bottom: 1px solid rgba(201, 75, 37, 0.08);
 }
 
 .settings-welcome p {
   margin: 0;
-  color: rgba(0, 212, 255, 0.6);
+  color: rgba(201, 75, 37, 0.6);
   font-size: 14px;
   letter-spacing: 0.5px;
 }
@@ -287,7 +311,7 @@ html, body {
 .settings-field input:focus,
 .settings-field select:focus,
 .settings-field textarea:focus {
-  border-color: rgba(0, 212, 255, 0.3);
+  border-color: rgba(201, 75, 37, 0.3);
 }
 
 .settings-field select {
@@ -306,10 +330,10 @@ html, body {
 
 .settings-btn {
   padding: 7px 14px;
-  border: 1px solid rgba(0, 212, 255, 0.2);
+  border: 1px solid rgba(201, 75, 37, 0.2);
   border-radius: 6px;
-  background: rgba(0, 212, 255, 0.06);
-  color: rgba(0, 212, 255, 0.6);
+  background: rgba(201, 75, 37, 0.06);
+  color: rgba(201, 75, 37, 0.6);
   font-size: 12px;
   letter-spacing: 0.5px;
   cursor: pointer;
@@ -318,20 +342,20 @@ html, body {
 }
 
 .settings-btn:hover {
-  background: rgba(0, 212, 255, 0.12);
-  color: rgba(0, 212, 255, 0.9);
-  border-color: rgba(0, 212, 255, 0.35);
+  background: rgba(201, 75, 37, 0.12);
+  color: rgba(201, 75, 37, 0.9);
+  border-color: rgba(201, 75, 37, 0.35);
 }
 
 .settings-btn.primary {
-  background: rgba(0, 212, 255, 0.12);
-  border-color: rgba(0, 212, 255, 0.3);
-  color: rgba(0, 212, 255, 0.8);
+  background: rgba(201, 75, 37, 0.12);
+  border-color: rgba(201, 75, 37, 0.3);
+  color: rgba(201, 75, 37, 0.8);
 }
 
 .settings-btn.primary:hover {
-  background: rgba(0, 212, 255, 0.2);
-  color: #00d4ff;
+  background: rgba(201, 75, 37, 0.2);
+  color: var(--signal);
 }
 
 .settings-actions {
@@ -408,7 +432,7 @@ html, body {
 }
 
 .sysinfo-row span:last-child {
-  color: rgba(0, 212, 255, 0.6);
+  color: rgba(201, 75, 37, 0.6);
   font-variant-numeric: tabular-nums;
 }
 
@@ -417,3 +441,48 @@ html, body {
   display: flex;
   justify-content: flex-end;
 }
+
+/* HUD Panels */
+.hud-panel {
+  position: fixed;
+  background: rgba(14, 16, 24, 0.92);
+  border: 1px solid rgba(255,255,255,0.06);
+  padding: 12px 14px;
+  min-width: 160px;
+  z-index: 100;
+  pointer-events: none;
+}
+.hud-tl { top: 24px; left: 24px; }
+.hud-tr { top: 24px; right: 80px; }
+.hud-bl { bottom: 72px; left: 24px; }
+.hud-br { bottom: 72px; right: 24px; }
+.hud-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(201,75,37,0.5);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 3px;
+}
+.hud-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(106,104,96,0.8);
+}
+.hud-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  color: rgba(240,237,232,0.7);
+}
+.hud-active { color: #c94b25 !important; }

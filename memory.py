@@ -402,31 +402,41 @@ def format_plan_for_voice(tasks: list[dict], events: list[dict]) -> str:
 # Memory extraction — learn from conversations
 # ---------------------------------------------------------------------------
 
-async def extract_memories(user_text: str, jarvis_response: str, anthropic_client) -> list[str]:
-    """After a conversation turn, extract any facts worth remembering.
+async def extract_memories(user_text: str, jarvis_response: str, anthropic_client=None) -> list[str]:
+    """After a conversation turn, extract any facts worth remembering via Gemini.
 
-    Uses Haiku to decide if anything in the exchange is worth storing.
     Returns list of memories stored.
     """
-    if not anthropic_client or len(user_text) < 15:
+    if len(user_text) < 15:
+        return []
+
+    gemini_key = ""
+    try:
+        import os as _os
+        gemini_key = _os.getenv("GEMINI_API_KEY", "")
+    except Exception:
+        pass
+
+    if not gemini_key:
         return []
 
     try:
-        response = await anthropic_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=200,
-            system=(
-                "Extract facts worth remembering from this conversation. "
-                "Only extract CONCRETE facts: preferences, decisions, names, dates, plans, goals. "
-                "NOT opinions, greetings, or casual chat. "
-                "Return JSON array of objects: [{\"type\": \"fact|preference|project|person|decision\", \"content\": \"...\", \"importance\": 1-10}] "
-                "Return [] if nothing worth remembering. Be very selective."
-            ),
-            messages=[{"role": "user", "content": f"User: {user_text}\nJARVIS: {jarvis_response}"}],
+        from google import genai as _genai
+        _client = _genai.Client(api_key=gemini_key)
+        prompt = (
+            "Extract facts worth remembering from this conversation. "
+            "Only extract CONCRETE facts: preferences, decisions, names, dates, plans, goals. "
+            "NOT opinions, greetings, or casual chat. "
+            'Return JSON array of objects: [{"type": "fact|preference|project|person|decision", "content": "...", "importance": 1-10}] '
+            "Return [] if nothing worth remembering. Be very selective.\n\n"
+            f"User: {user_text}\nJARVIS: {jarvis_response}"
         )
+        response = _client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        text = (response.text or "").strip()
 
-        text = response.content[0].text.strip()
-        # Parse JSON
+        # Parse JSON — strip markdown fences if present
+        import re as _re
+        text = _re.sub(r'^```[a-z]*\n?', '', text).rstrip('`').strip()
         if text.startswith("["):
             items = json.loads(text)
             stored = []

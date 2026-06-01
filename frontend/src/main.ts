@@ -33,11 +33,25 @@ function showError(msg: string) {
 function updateStatus(state: State) {
   const labels: Record<State, string> = {
     idle: "",
-    listening: "listening...",
-    thinking: "thinking...",
+    listening: "in ascolto...",
+    thinking: "elaboro...",
     speaking: "",
   };
   statusEl.textContent = labels[state];
+}
+
+function updateHUD(state: State) {
+  const el = document.getElementById('hud-state');
+  if (el) {
+    const labels: Record<State, string> = {
+      idle: 'IDLE',
+      listening: 'LISTEN',
+      thinking: 'THINK',
+      speaking: 'SPEAK',
+    };
+    el.textContent = labels[state] || state.toUpperCase();
+    el.className = state !== 'idle' ? 'hud-val hud-active' : 'hud-val';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +73,7 @@ function transition(newState: State) {
   currentState = newState;
   orb.setState(newState as OrbState);
   updateStatus(newState);
+  updateHUD(newState);
 
   switch (newState) {
     case "idle":
@@ -80,11 +95,37 @@ function transition(newState: State) {
 // Voice input
 // ---------------------------------------------------------------------------
 
+const WAKE_WORDS = ["let's start", "lets start", "inizia", "hey jarvis", "whyjarv"];
+let isAwake = false;
+
 const voiceInput = createVoiceInput(
   (text: string) => {
-    // Cancel any current JARVIS response before sending new input
-    audioPlayer.stop();
-    // User spoke — send transcript
+    const t = text.toLowerCase().trim();
+
+    // Wake word detection — attiva quando WhyJarv è in idle
+    if (!isAwake) {
+      const triggered = WAKE_WORDS.some(w => t.includes(w));
+      if (triggered) {
+        isAwake = true;
+        speechSynthesis.cancel();
+        // Suona un tick di conferma via TTS
+        const ack = new SpeechSynthesisUtterance(".");
+        ack.volume = 0; // silenzioso, solo per attivare il contesto audio
+        speechSynthesis.speak(ack);
+        transition("listening");
+      }
+      return; // ignora tutto il resto quando dormiente
+    }
+
+    // Shutdown
+    if (t.includes("chiuditi") || t.includes("goodbye whyjarv") || t.includes("arrivederci")) {
+      isAwake = false;
+      transition("idle");
+      return;
+    }
+
+    // Comando normale — invia a WhyJarv
+    speechSynthesis.cancel();
     socket.send({ type: "transcript", text, isFinal: true });
     transition("thinking");
   },
@@ -105,24 +146,51 @@ audioPlayer.onFinished(() => {
 // WebSocket messages
 // ---------------------------------------------------------------------------
 
+// ── Web Speech Synthesis — Apple TTS nativo, latenza <50ms ──────────────────
+function getItalianVoice(): SpeechSynthesisVoice | null {
+  const voices = speechSynthesis.getVoices();
+  return (
+    voices.find(v => v.name === "Federica") ||
+    voices.find(v => v.lang === "it-IT" && v.localService) ||
+    voices.find(v => v.lang.startsWith("it") && v.localService) ||
+    voices.find(v => v.localService) ||
+    voices[0] || null
+  );
+}
+
+function speakText(text: string) {
+  speechSynthesis.cancel();
+  const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
+  transition("speaking");
+  let idx = 0;
+  function speakNext() {
+    if (idx >= sentences.length) { transition("idle"); return; }
+    const utt = new SpeechSynthesisUtterance(sentences[idx++].trim());
+    const voice = getItalianVoice();
+    if (voice) utt.voice = voice;
+    utt.lang = "it-IT";
+    utt.rate = 1.1;
+    utt.pitch = 0.9;
+    utt.onend = speakNext;
+    utt.onerror = () => { transition("idle"); };
+    speechSynthesis.speak(utt);
+  }
+  speakNext();
+}
+
+speechSynthesis.onvoiceschanged = () => { getItalianVoice(); };
+
 socket.onMessage((msg) => {
   const type = msg.type as string;
 
-  if (type === "audio") {
-    const audioData = msg.data as string;
-    console.log("[audio] received", audioData ? `${audioData.length} chars` : "EMPTY", "state:", currentState);
-    if (audioData) {
-      if (currentState !== "speaking") {
-        transition("speaking");
-      }
-      audioPlayer.enqueue(audioData);
-    } else {
-      // TTS failed — no audio but still need to return to idle
-      console.warn("[audio] no data received, returning to idle");
-      transition("idle");
-    }
-    // Log text for debugging
-    if (msg.text) console.log("[JARVIS]", msg.text);
+  if (type === "tts") {
+    const text = msg.text as string;
+    if (text) { console.log("[WhyJarv]", text); speakText(text); }
+    else transition("idle");
+  } else if (type === "audio") {
+    // Fallback — non usato in WhyJarv ma compatibile col backend originale
+    if (msg.text) speakText(msg.text as string);
+    else transition("idle");
   } else if (type === "status") {
     const state = msg.state as string;
     if (state === "thinking" && currentState !== "thinking") {
