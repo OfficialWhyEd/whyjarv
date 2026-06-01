@@ -18,7 +18,8 @@ declare const webkitSpeechRecognition: any;
 
 export function createVoiceInput(
   onTranscript: (text: string) => void,
-  onError: (msg: string) => void
+  onError: (msg: string) => void,
+  onInterim?: (text: string) => void,   // Sistema 4: speculative pre-computation
 ): VoiceInput {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const SR = (window as any).SpeechRecognition || (typeof webkitSpeechRecognition !== "undefined" ? webkitSpeechRecognition : null);
@@ -37,9 +38,12 @@ export function createVoiceInput(
 
   recognition.onresult = (event: any) => {
     for (let i = event.resultIndex; i < event.results.length; i++) {
+      const text = event.results[i][0].transcript.trim();
       if (event.results[i].isFinal) {
-        const text = event.results[i][0].transcript.trim();
         if (text) onTranscript(text);
+      } else {
+        // Interim: manda al backend per speculative pre-computation
+        if (text && onInterim) onInterim(text);
       }
     }
   };

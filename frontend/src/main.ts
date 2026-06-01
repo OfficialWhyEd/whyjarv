@@ -102,6 +102,7 @@ const voiceInput = createVoiceInput(
   (text: string) => {
     const t = text.toLowerCase().trim();
 
+
     // Wake word detection — attiva quando WhyJarv è in idle
     if (!isAwake) {
       const triggered = WAKE_WORDS.some(w => t.includes(w));
@@ -131,6 +132,12 @@ const voiceInput = createVoiceInput(
   },
   (msg: string) => {
     showError(msg);
+  },
+  // Sistema 4: interim transcript → speculative pre-computation
+  (interim: string) => {
+    if (isAwake && interim.split(" ").length >= 4) {
+      socket.send({ type: "transcript", text: interim, isFinal: false });
+    }
   }
 );
 
