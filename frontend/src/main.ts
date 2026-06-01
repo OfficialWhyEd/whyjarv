@@ -165,13 +165,79 @@ function getItalianVoice(): SpeechSynthesisVoice | null {
   );
 }
 
+// ── Full-duplex barge-in (ispirato a PersonaPlex NVIDIA) ──────────────────
+// WhyJarv sente Edoardo anche mentre parla — si ferma immediatamente.
+// Implementato con Web Audio API + VAD leggero (zero ML, pure DOM).
+let _bargeInDetector: ReturnType<typeof _createBargeInDetector> | null = null;
+
+function _createBargeInDetector(onBargeIn: () => void) {
+  let audioCtx: AudioContext | null = null;
+  let analyser: AnalyserNode | null = null;
+  let stream: MediaStream | null = null;
+  let animId: number | null = null;
+  const THRESHOLD = 0.015;  // sensibilità voce
+
+  function start() {
+    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      .then(s => {
+        stream = s;
+        audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(s);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+
+        const data = new Float32Array(analyser.frequencyBinCount);
+        function detect() {
+          if (!analyser) return;
+          analyser.getFloatTimeDomainData(data);
+          const rms = Math.sqrt(data.reduce((s, v) => s + v * v, 0) / data.length);
+          if (rms > THRESHOLD) {
+            onBargeIn();
+          }
+          animId = requestAnimationFrame(detect);
+        }
+        detect();
+      })
+      .catch(() => {});  // silenzioso se non disponibile
+  }
+
+  function stop() {
+    if (animId) cancelAnimationFrame(animId);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (audioCtx) audioCtx.close();
+    analyser = null; stream = null; audioCtx = null;
+  }
+
+  return { start, stop };
+}
+
 function speakText(text: string) {
   speechSynthesis.cancel();
+  if (_bargeInDetector) { _bargeInDetector.stop(); _bargeInDetector = null; }
+
   const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
   transition("speaking");
   let idx = 0;
+  let stopped = false;
+
+  // Barge-in: se Edoardo parla mentre WhyJarv risponde → si ferma subito
+  _bargeInDetector = _createBargeInDetector(() => {
+    if (!stopped && currentState === "speaking") {
+      stopped = true;
+      speechSynthesis.cancel();
+      if (_bargeInDetector) { _bargeInDetector.stop(); _bargeInDetector = null; }
+      transition("listening");
+    }
+  });
+  _bargeInDetector.start();
+
   function speakNext() {
-    if (idx >= sentences.length) { transition("idle"); return; }
+    if (stopped || idx >= sentences.length) {
+      if (_bargeInDetector) { _bargeInDetector.stop(); _bargeInDetector = null; }
+      if (!stopped) transition("idle");
+      return;
+    }
     const utt = new SpeechSynthesisUtterance(sentences[idx++].trim());
     const voice = getItalianVoice();
     if (voice) utt.voice = voice;
