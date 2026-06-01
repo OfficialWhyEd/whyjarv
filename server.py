@@ -3078,30 +3078,54 @@ class PreferencesUpdate(BaseModel):
 
 @app.post("/api/settings/keys")
 async def api_settings_keys(body: KeyUpdate):
-    allowed = {"ANTHROPIC_API_KEY", "FISH_API_KEY", "FISH_VOICE_ID", "USER_NAME", "HONORIFIC", "CALENDAR_ACCOUNTS"}
+    allowed = {"GEMINI_API_KEY", "GROQ_API_KEY", "USER_NAME", "CALENDAR_ACCOUNTS"}
     if body.key_name not in allowed:
         return JSONResponse({"success": False, "error": "Invalid key name"}, status_code=400)
     _write_env_key(body.key_name, body.key_value)
+    # Aggiorna variabili in memoria
+    if body.key_name == "GEMINI_API_KEY":
+        global GEMINI_API_KEY, _gemini_client
+        GEMINI_API_KEY = body.key_value
+        _gemini_client = None  # force re-init
+    elif body.key_name == "GROQ_API_KEY":
+        global GROQ_API_KEY, _groq_client
+        GROQ_API_KEY = body.key_value
+        _groq_client = None
     return {"success": True}
 
-@app.post("/api/settings/test-anthropic")
-async def api_test_anthropic(body: KeyTest):
-    """Test Gemini key instead (WhyJarv uses Gemini, not Anthropic SDK directly)."""
+@app.post("/api/settings/test-gemini")
+@app.post("/api/settings/test-anthropic")   # alias per compatibilità frontend
+async def api_test_gemini(body: KeyTest):
+    """Test Gemini API key."""
     key = body.key_value or os.getenv("GEMINI_API_KEY", "")
     if not key:
-        return {"valid": False, "error": "No Gemini API key provided"}
+        return {"valid": False, "error": "Nessuna Gemini API key fornita"}
     try:
         from google import genai as _genai
         _client = _genai.Client(api_key=key)
-        _client.models.generate_content(model="gemini-2.0-flash-lite", contents="Hi")
-        return {"valid": True}
+        _client.models.generate_content(model="gemini-flash-lite-latest", contents="Hi")
+        return {"valid": True, "message": "Gemini OK"}
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
 
-@app.post("/api/settings/test-fish")
-async def api_test_fish(body: KeyTest):
-    """Fish Audio not used — TTS is browser speechSynthesis."""
-    return {"valid": False, "error": "Fish Audio not used in WhyJarv — TTS is browser native"}
+@app.post("/api/settings/test-groq")
+@app.post("/api/settings/test-fish")   # alias per compatibilità frontend
+async def api_test_groq(body: KeyTest):
+    """Test Groq API key."""
+    key = body.key_value or os.getenv("GROQ_API_KEY", "")
+    if not key:
+        return {"valid": False, "error": "Nessuna Groq API key fornita"}
+    try:
+        from groq import Groq as _Groq
+        c = _Groq(api_key=key)
+        c.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=5
+        )
+        return {"valid": True, "message": "Groq OK"}
+    except Exception as e:
+        return {"valid": False, "error": str(e)[:200]}
 
 @app.get("/api/settings/status")
 async def api_settings_status():
@@ -3130,10 +3154,12 @@ async def api_settings_status():
         "server_port": 8340,
         "uptime_seconds": int(time.time() - _session_start),
         "env_keys_set": {
-            "anthropic": bool(env_dict.get("ANTHROPIC_API_KEY", "").strip() and env_dict.get("ANTHROPIC_API_KEY", "") != "your-anthropic-api-key-here"),
-            "fish_audio": bool(env_dict.get("FISH_API_KEY", "").strip() and env_dict.get("FISH_API_KEY", "") != "your-fish-audio-api-key-here"),
-            "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
+            "gemini": bool(env_dict.get("GEMINI_API_KEY", "").strip()),
+            "groq":   bool(env_dict.get("GROQ_API_KEY", "").strip()),
             "user_name": env_dict.get("USER_NAME", ""),
+            "atomic_memory_facts": get_memory().all_count(),
+            "groq_rpm":   _limiters["groq"].usage()["rpm"],
+            "gemini_rpm": _limiters["gemini"].usage()["rpm"],
         },
     }
 
