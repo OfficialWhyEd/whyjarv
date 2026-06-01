@@ -13,10 +13,16 @@ import json
 import urllib.request
 from pathlib import Path
 
-# Nasconde il processo dal Dock (LSUIElement via PyObjC)
+# Nasconde dal Dock PRIMA che rumps avvii il run loop
 try:
-    from AppKit import NSApp, NSApplicationActivationPolicyAccessory
-    NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    from AppKit import NSApplication, NSApplicationActivationPolicyAccessory, NSImage
+    _nsapp = NSApplication.sharedApplication()
+    _nsapp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    _icon = NSImage.alloc().initWithContentsOfFile_(
+        "/Applications/WhyJarv.app/Contents/Resources/AppIcon.icns"
+    )
+    if _icon:
+        _nsapp.setApplicationIconImage_(_icon)
 except Exception:
     pass
 
@@ -54,14 +60,15 @@ class WhyJarvApp(rumps.App):
         self._backend_pid = None
         self._polling = True
 
-        # Icona WJ personalizzata + nasconde dal Dock
+        # Applica icona WJ e rimuovi dal Dock (dopo super().__init__ NSApp è pronto)
         try:
-            from AppKit import NSApp, NSImage, NSApplicationActivationPolicyAccessory
-            icon_path = "/Applications/WhyJarv.app/Contents/Resources/AppIcon.icns"
-            icon = NSImage.alloc().initWithContentsOfFile_(icon_path)
-            if icon:
-                NSApp.setApplicationIconImage_(icon)
+            from AppKit import NSApp, NSApplicationActivationPolicyAccessory, NSImage
             NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+            _icon = NSImage.alloc().initWithContentsOfFile_(
+                "/Applications/WhyJarv.app/Contents/Resources/AppIcon.icns"
+            )
+            if _icon:
+                NSApp.setApplicationIconImage_(_icon)
         except Exception:
             pass
 
