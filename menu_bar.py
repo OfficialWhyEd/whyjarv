@@ -54,6 +54,17 @@ class WhyJarvApp(rumps.App):
         self._backend_pid = None
         self._polling = True
 
+        # Icona WJ personalizzata + nasconde dal Dock
+        try:
+            from AppKit import NSApp, NSImage, NSApplicationActivationPolicyAccessory
+            icon_path = "/Applications/WhyJarv.app/Contents/Resources/AppIcon.icns"
+            icon = NSImage.alloc().initWithContentsOfFile_(icon_path)
+            if icon:
+                NSApp.setApplicationIconImage_(icon)
+            NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        except Exception:
+            pass
+
         # Menu items
         self._status_item = rumps.MenuItem("● Offline", callback=None)
         self._status_item.set_callback(None)
