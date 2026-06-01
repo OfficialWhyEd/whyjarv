@@ -13,6 +13,13 @@ import json
 import urllib.request
 from pathlib import Path
 
+# Nasconde il processo dal Dock (LSUIElement via PyObjC)
+try:
+    from AppKit import NSApp, NSApplicationActivationPolicyAccessory
+    NSApp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+except Exception:
+    pass
+
 DIR = Path.home() / "Documents" / "WhyJarv"
 BACKEND_URL = "http://localhost:8340"
 POLL_INTERVAL = 0.8  # seconds
