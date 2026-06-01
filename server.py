@@ -200,7 +200,7 @@ The user interacts with you through a web browser showing a particle orb visuali
 - **Fix Yourself**: Opens Claude Code in your own project directory so you can debug and fix issues in your own code.
 - **The orb**: The glowing particle visualization in the center. It reacts to your voice when speaking, pulses when listening, and swirls when thinking.
 
-If asked about any of these, explain them briefly and naturally. If the user is having trouble, suggest the relevant control: "Try the settings panel — the gear icon in the top right." or "The mute button may be active, sir."
+If asked about any of these, explain them briefly and naturally. If the user is having trouble, suggest the relevant control: "Try the settings panel — the gear icon in the top right." or "The mute button may be active."
 
 SPEECH-TO-TEXT CORRECTIONS (the user speaks, speech recognition may mishear):
 - "Cloud code" or "cloud" = "Claude Code" or "Claude"
@@ -250,7 +250,7 @@ You use Claude Code as your tool to build, research, and write code — but YOU 
 IMPORTANT: When the user says "jump into X", "work on X", "check on X", "resume X", "go back to X" — ALWAYS use [ACTION:PROMPT_PROJECT]. You have the ability to connect to any project and work on it directly. DO NOT say you can't see terminal history or don't have access — you DO.
 
 Place the tag at the END of your spoken response. Example:
-"Right away, sir — connecting to The Client Engine now. [ACTION:PROMPT_PROJECT] The Client Engine ||| Review the current state and what was being worked on. What should we focus on next?"
+"Right away — connecting to The Client Engine now. [ACTION:PROMPT_PROJECT] The Client Engine ||| Review the current state and what was being worked on. What should we focus on next?"
 
 IMPORTANT:
 - Do NOT use action tags for casual conversation
@@ -967,7 +967,7 @@ async def _execute_prompt_project(project_name: str, prompt: str, work_session: 
             dispatch_id = dispatch_registry.register(project_name, project_dir or "", prompt)
 
         if not project_dir:
-            msg = f"Couldn't find the {project_name} project directory, sir."
+            msg = f"Couldn't find the {project_name} project directory."
             await speak_via_browser(msg, ws)
             return
 
@@ -1048,7 +1048,7 @@ async def _execute_prompt_project(project_name: str, prompt: str, work_session: 
     except Exception as e:
         log.error(f"Prompt project failed: {e}", exc_info=True)
         try:
-            msg = f"Had trouble connecting to {project_name}, sir."
+            msg = f"Had trouble connecting to {project_name}."
             await speak_via_browser(msg, ws)
         except Exception:
             pass
@@ -1061,7 +1061,7 @@ async def self_work_and_notify(session: WorkSession, prompt: str, ws):
         log.info(f"Background work complete ({len(full_response)} chars)")
 
         # Summarize and speak
-        msg = "Work is complete, sir."
+        msg = "Work is complete."
         if full_response:
             if GEMINI_API_KEY:
                 try:
@@ -1108,11 +1108,21 @@ async def speak_via_browser(text: str, ws: WebSocket):
 
 
 # ---------------------------------------------------------------------------
-# LLM Response
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Conversation AI — Gemini + Groq in parallelo, vince il più veloce
+# WhyJarv — 3-Layer Subagent Architecture
+#
+#  Layer 1 · GROQ   → Conversazione istantanea (<200ms, llama-3.3-70b)
+#  Layer 2 · GEMINI → Analisi + compressione contesto per Claude (<500ms)
+#  Layer 3 · CLAUDE → Azioni reali (build, browse, AppleScript, ecc.)
+#
+#  Flusso normale:
+#    Parli → GROQ risponde vocalmente
+#           → se c'è un'azione: GEMINI comprime il contesto
+#                              → CLAUDE esegue con prompt ottimizzato
+#
+#  Fallback automatico + comunicazione a Edoardo:
+#    GROQ rate limit  → GEMINI prende il ruolo conversazione
+#    GEMINI rate limit → CLAUDE gestisce tutto
+#    Tutti falliscono → WhyJarv lo dice e usa Claude CLI direttamente
 # ---------------------------------------------------------------------------
 
 async def _gemini_chat(prompt: str) -> str:
@@ -1191,41 +1201,44 @@ async def _groq_chat(prompt: str) -> str:
 
 
 async def _race_ai(prompt: str) -> str:
-    """Lancia Gemini e Groq in parallelo — risponde chi arriva prima.
-    Il perdente viene cancellato immediatamente.
-    Se entrambi falliscono → Claude CLI."""
+    """Layer 1+2 race: Groq (voce) vs Gemini (analisi) in parallelo.
+    Vince il primo. Il perdente viene cancellato.
+    Aggiorna _layer_status per tracciare rate limits."""
     tasks = []
-    if GEMINI_API_KEY:
-        tasks.append(asyncio.create_task(_gemini_chat(prompt), name="gemini"))
     if GROQ_API_KEY:
         tasks.append(asyncio.create_task(_groq_chat(prompt), name="groq"))
+    if GEMINI_API_KEY:
+        tasks.append(asyncio.create_task(_gemini_chat(prompt), name="gemini"))
 
     if not tasks:
         return ""
 
     try:
-        # Aspetta il primo che risponde
         done, pending = await asyncio.wait(
             tasks,
             return_when=asyncio.FIRST_COMPLETED,
             timeout=8.0,
         )
-        # Cancella i task rimasti
         for t in pending:
             t.cancel()
 
-        # Prendi il primo risultato non vuoto
+        # Prova il vincitore
         for t in done:
             try:
                 result = t.result()
                 if result:
                     winner = t.get_name()
                     log.info(f"⚡ Race winner: {winner}")
+                    _layer_status[winner] = True  # mark as healthy
                     return result
-            except Exception:
-                pass
+            except Exception as e:
+                loser = t.get_name()
+                err = str(e)
+                if "429" in err or "rate" in err.lower():
+                    _layer_status[loser] = False
+                    log.warning(f"⚠ {loser} rate-limited")
 
-        # Se il primo era vuoto, aspetta gli altri (già in done se timeout)
+        # Vinci gli altri task completati
         for t in done:
             try:
                 result = t.result()
@@ -1242,19 +1255,47 @@ async def _race_ai(prompt: str) -> str:
     return ""
 
 
+async def _gemini_analyze(user_text: str, context_summary: str) -> str:
+    """Layer 2 — Gemini analizza il contesto e produce un prompt compresso
+    per Claude. Riduce i token inviati a Claude e aumenta la precisione.
+    Ritorna un prompt pronto all'uso per Claude CLI."""
+    analysis_prompt = f"""Sei l'analizzatore di WhyJarv.
+Devi produrre un prompt compresso e preciso per Claude Code CLI che eseguirà l'azione richiesta.
+
+CONTESTO ESSENZIALE:
+{context_summary}
+
+RICHIESTA UTENTE: {user_text}
+
+Produci UN prompt diretto per Claude Code che:
+1. Descrive esattamente cosa fare
+2. Include solo il contesto necessario (zero ridondanza)
+3. Finisce con un [ACTION:X] tag se serve un'azione specifica
+
+Rispondi SOLO con il prompt per Claude, niente altro."""
+
+    result = await _gemini_chat(analysis_prompt)
+    return result or user_text  # fallback al testo originale
+
+
+# Stato dei layer per comunicare i fallback a Edoardo
+_layer_status = {"groq": True, "gemini": True}
+
+
 async def generate_response(
     text: str,
-    client,  # unused, kept for API compat
+    client,
     task_mgr: ClaudeTaskManager,
     projects: list[dict],
     conversation_history: list[dict],
     last_response: str = "",
     session_summary: str = "",
 ) -> str:
-    """Generate WhyJarv response.
+    """WhyJarv 3-layer response generation.
 
-    - Pure conversation → Gemini 2.0 Flash (if GEMINI_API_KEY set) — instant
-    - Everything else → Claude Code CLI (claude --print)
+    Layer 1 (Groq)   → risposta vocale istantanea (<200ms)
+    Layer 2 (Gemini) → analisi + compressione contesto per Claude
+    Layer 3 (Claude) → esecuzione azioni reali
     """
     now = datetime.now()
     current_time = now.strftime("%A, %d/%m/%Y ore %H:%M")
@@ -1269,21 +1310,19 @@ async def generate_response(
         workspace_context=workspace_context,
     )
 
-    # Build context additions
     if screen_ctx:
-        system += f"\n\nSCHERMO ATTIVO:\n{screen_ctx}"
+        system += f"\n\nSCHERMO:\n{screen_ctx}"
     if calendar_ctx and calendar_ctx != "No calendar data yet.":
         system += f"\n\nCALENDARIO:\n{calendar_ctx}"
     if mail_ctx and mail_ctx != "No mail data yet.":
         system += f"\n\nEMAIL:\n{mail_ctx}"
     if last_response:
-        system += f'\n\nTUA ULTIMA RISPOSTA (non ripetere):\n"{last_response[:150]}"'
+        system += f'\n\nULTIMA RISPOSTA:\n"{last_response[:150]}"'
 
     memory_ctx = build_memory_context(text)
     if memory_ctx:
         system += f"\n\nMEMORIA:\n{memory_ctx}"
 
-    # Build conversation history
     history_lines = []
     for msg in conversation_history[-10:]:
         role = "Edoardo" if msg.get("role") == "user" else "WhyJarv"
@@ -1294,13 +1333,17 @@ async def generate_response(
         full_prompt += "\n".join(history_lines) + "\n"
     full_prompt += f"Edoardo: {text}\nWhyJarv:"
 
-    # Race: Gemini vs Groq in parallelo — risponde il più veloce (<300ms atteso)
-    if GEMINI_API_KEY or GROQ_API_KEY:
+    # ── LAYER 1+2: GROQ (voce) + GEMINI (analisi) in race ──
+    if GROQ_API_KEY or GEMINI_API_KEY:
         race_result = await _race_ai(full_prompt)
         if race_result:
             return race_result
+        else:
+            # Tutti i layer AI falliti — comunica a Edoardo
+            log.warning("⚠ Groq + Gemini non disponibili — uso Claude CLI")
+            return "Groq e Gemini non disponibili, passo a Claude. [FALLBACK_CLAUDE]"
 
-    # Fallback finale: Claude Code CLI
+    # ── LAYER 3: CLAUDE CLI — ultimo fallback e azioni reali ──
     try:
         process = await asyncio.create_subprocess_exec(
             "claude", "--print", "--no-color",
@@ -1531,7 +1574,7 @@ async def health():
 @app.get("/api/tts-test")
 async def tts_test():
     """Generate a test audio clip for debugging."""
-    await speak_via_browser("Testing audio, sir.", ws)
+    await speak_via_browser("Testing audio.", ws)
     return {"audio": None, "error": "TTS failed"}
 
 
@@ -1713,12 +1756,12 @@ async def handle_build(target: str) -> str:
     )
 
     recently_built.append({"name": name, "path": path, "time": time.time()})
-    return f"On it, sir. Claude Code is working in {name}."
+    return f"On it. Claude Code is working in {name}."
 
 
 async def handle_show_recent() -> str:
     if not recently_built:
-        return "Nothing built recently, sir."
+        return "Nothing built recently."
     last = recently_built[-1]
     project_path = Path(last["path"])
 
@@ -1727,19 +1770,19 @@ async def handle_show_recent() -> str:
         f = project_path / name
         if f.exists():
             await open_browser(f"file://{f}")
-            return f"Opened {name} from {last['name']}, sir."
+            return f"Opened {name} from {last['name']}."
 
     # Try any HTML file
     html_files = list(project_path.glob("*.html"))
     if html_files:
         await open_browser(f"file://{html_files[0]}")
-        return f"Opened {html_files[0].name} from {last['name']}, sir."
+        return f"Opened {html_files[0].name} from {last['name']}."
 
     # Fall back to opening the folder in Finder
     escaped_last_path = applescript_escape(last["path"])
     script = f'tell application "Finder"\nactivate\nopen POSIX file "{escaped_last_path}"\nend tell'
     await asyncio.create_subprocess_exec("osascript", "-e", script, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    return f"Opened the {last['name']} folder in Finder, sir."
+    return f"Opened the {last['name']} folder in Finder."
 
 
 # ---------------------------------------------------------------------------
@@ -1798,7 +1841,7 @@ async def _lookup_and_report(lookup_type: str, lookup_fn, ws, history: list[dict
     except asyncio.TimeoutError:
         _active_lookups[lookup_id]["status"] = "timeout"
         try:
-            fallback = f"That {lookup_type} check is taking too long, sir. The data may still be syncing."
+            fallback = f"That {lookup_type} check is taking too long. The data may still be syncing."
             await speak_via_browser(fallback, ws)
             await ws.send_json({"type": "status", "state": "speaking"})
             if audio:
@@ -1830,7 +1873,7 @@ async def _do_mail_lookup() -> str:
     if isinstance(unread_info, dict):
         _ctx_cache["mail"] = format_unread_summary(unread_info)
         if unread_info["total"] == 0:
-            return "Inbox is clear, sir. No unread messages."
+            return "Inbox is clear. No unread messages."
         unread_msgs = await get_unread_messages(count=5)
         summary = format_unread_summary(unread_info)
         if unread_msgs:
@@ -1841,7 +1884,7 @@ async def _do_mail_lookup() -> str:
             )
             return f"{summary} Most recent: {details}."
         return summary
-    return "Couldn't reach Mail at the moment, sir."
+    return "Couldn't reach Mail at the moment."
 
 
 async def _do_screen_lookup() -> str:
@@ -1854,7 +1897,7 @@ async def _do_screen_lookup() -> str:
         if active:
             result += f" Currently focused on {active['app']}: {active['title']}."
         return result
-    return "Couldn't see the screen, sir."
+    return "Couldn't see the screen."
 
 
 def get_lookup_status() -> str:
@@ -1898,7 +1941,7 @@ async def handle_browse(text: str, target: str) -> str:
         if not domain.startswith("http"):
             domain = "https://" + domain
         await open_browser(domain, browser)
-        return f"Opened {url_match.group(0)}, sir."
+        return f"Opened {url_match.group(0)}."
 
     # 2. Check for spoken domains that speech-to-text mangled
     # "Joe tmd.com" → "joetmd.com", "roofo.co" etc.
@@ -1913,7 +1956,7 @@ async def handle_browse(text: str, target: str) -> str:
             if not domain.startswith("http"):
                 domain = "https://" + domain
             await open_browser(domain, browser)
-            return f"Opened {word}, sir."
+            return f"Opened {word}."
 
     # 3. Fall back to Google search with cleaned query
     query = target
@@ -1930,7 +1973,7 @@ async def handle_browse(text: str, target: str) -> str:
 
     url = f"https://www.google.com/search?q={quote(query)}"
     await open_browser(url, browser)
-    return "Searching for that, sir."
+    return "Searching for that."
 
 
 async def handle_research(text: str, target: str, client=None) -> str:
@@ -1992,17 +2035,17 @@ blockquote {{ border-left: 3px solid #c94b25; margin-left: 0; padding-left: 16px
                     f"Summarize this research in ONE sentence for voice. No markdown.\n\n{research_text[:2000]}"
                 )
                 if summary_text:
-                    return summary_text + " Full results are in your browser, sir."
+                    return summary_text + " Full results are in your browser."
             except Exception:
                 pass
 
-        return "Research is done, sir. Full results are in your browser."
+        return "Research is done. Full results are in your browser."
 
     except Exception as e:
         log.error(f"Research failed: {e}")
         from urllib.parse import quote as _q
         await open_browser(f"https://www.google.com/search?q={_q(target)}")
-        return "Pulled up a search for that, sir."
+        return "Pulled up a search for that."
 
 
 # -- Session Summary (Three-Tier Memory) -----------------------------------
@@ -2118,7 +2161,7 @@ async def voice_handler(ws: WebSocket):
             if msg.get("type") == "fix_self":
                 jarvis_dir = str(Path(__file__).parent)
                 await work_session.start(jarvis_dir)
-                response_text = "Work mode active in my own repo, sir. Tell me what needs fixing."
+                response_text = "Work mode active in my own repo. Tell me what needs fixing."
                 tts = strip_markdown_for_tts(response_text)
                 await ws.send_json({"type": "status", "state": "speaking"})
                 await speak_via_browser(tts, ws)
@@ -2178,7 +2221,7 @@ async def voice_handler(ws: WebSocket):
                         did = dispatch_registry.register(name, path, prompt[:200])
                         asyncio.create_task(_execute_prompt_project(name, prompt, work_session, ws, dispatch_id=did, history=history, voice_state=voice_state))
                         planner.reset()
-                        response_text = "Building it now, sir."
+                        response_text = "Building it now."
                     elif planner.active_plan and planner.active_plan.confirmed is False and planner.active_plan.current_question_index >= len(planner.active_plan.pending_questions):
                         # Confirmation phase
                         result = await planner.handle_confirmation(user_text)
@@ -2191,25 +2234,25 @@ async def voice_handler(ws: WebSocket):
                             did = dispatch_registry.register(name, path, prompt[:200])
                             asyncio.create_task(_execute_prompt_project(name, prompt, work_session, ws, dispatch_id=did, history=history, voice_state=voice_state))
                             planner.reset()
-                            response_text = "On it, sir."
+                            response_text = "On it."
                         elif result["cancelled"]:
                             planner.reset()
-                            response_text = "Cancelled, sir."
+                            response_text = "Cancelled."
                         else:
-                            response_text = result.get("modification_question", "How shall I adjust the plan, sir?")
+                            response_text = result.get("modification_question", "How shall I adjust the plan?")
                     else:
                         result = await planner.process_answer(user_text, cached_projects)
                         if result["plan_complete"]:
-                            response_text = result.get("confirmation_summary", "Ready to build. Shall I proceed, sir?")
+                            response_text = result.get("confirmation_summary", "Ready to build. Shall I proceed?")
                         else:
-                            response_text = result.get("next_question", "What else, sir?")
+                            response_text = result.get("next_question", "What else?")
 
                 elif any(w in t_lower for w in ["quit work mode", "exit work mode", "go back to chat", "regular mode", "stop working"]):
                     if work_session.active:
                         await work_session.stop()
-                        response_text = "Back to conversation mode, sir."
+                        response_text = "Back to conversation mode."
                     else:
-                        response_text = "Already in conversation mode, sir."
+                        response_text = "Already in conversation mode."
 
                 # ── WORK MODE: speech → claude -p → Haiku summary → JARVIS voice ──
                 elif work_session.active:
@@ -2282,37 +2325,37 @@ async def voice_handler(ws: WebSocket):
                         elif action["action"] == "show_recent":
                             response_text = await handle_show_recent()
                         elif action["action"] == "describe_screen":
-                            response_text = "Taking a look now, sir."
+                            response_text = "Taking a look now."
                             asyncio.create_task(_lookup_and_report("screen", _do_screen_lookup, ws, history=history, voice_state=voice_state))
                         elif action["action"] == "check_calendar":
-                            response_text = "Checking your calendar now, sir."
+                            response_text = "Checking your calendar now."
                             asyncio.create_task(_lookup_and_report("calendar", _do_calendar_lookup, ws, history=history, voice_state=voice_state))
                         elif action["action"] == "check_mail":
-                            response_text = "Checking your inbox now, sir."
+                            response_text = "Checking your inbox now."
                             asyncio.create_task(_lookup_and_report("mail", _do_mail_lookup, ws, history=history, voice_state=voice_state))
                         elif action["action"] == "check_dispatch":
                             recent = dispatch_registry.get_most_recent()
                             if not recent:
-                                response_text = "No recent builds on record, sir."
+                                response_text = "No recent builds on record."
                             else:
                                 name = recent["project_name"]
                                 status = recent["status"]
                                 if status == "building" or status == "pending":
                                     elapsed = int(time.time() - recent["updated_at"])
-                                    response_text = f"Still working on {name}, sir. Been at it for {elapsed} seconds."
+                                    response_text = f"Still working on {name}. Been at it for {elapsed} seconds."
                                 elif status == "completed":
-                                    response_text = recent.get("summary") or f"{name} is complete, sir."
+                                    response_text = recent.get("summary") or f"{name} is complete."
                                 elif status in ("failed", "timeout"):
-                                    response_text = f"{name} ran into problems, sir."
+                                    response_text = f"{name} ran into problems."
                                 else:
-                                    response_text = f"{name} is {status}, sir."
+                                    response_text = f"{name} is {status}."
                         elif action["action"] == "check_tasks":
                             tasks = get_open_tasks()
                             response_text = format_tasks_for_voice(tasks)
                         elif action["action"] == "check_usage":
                             response_text = get_usage_summary()
                         else:
-                            response_text = "Understood, sir."
+                            response_text = "Understood."
                     else:
                         response_text = await generate_response(
                             user_text, None, task_manager,
@@ -2327,18 +2370,28 @@ async def voice_handler(ws: WebSocket):
                             if embedded_action:
                                 log.info(f"LLM embedded action: {embedded_action}")
                                 response_text = clean_response
-                                # Ensure there's always something to speak
+
+                                # Layer 2 — Gemini ottimizza il prompt per Claude
+                                # (riduce token, aumenta precisione dell'azione)
+                                if embedded_action["action"] in ("build", "prompt_project", "research"):
+                                    ctx_summary = f"Progetto: {user_text}\nSchermo: {_ctx_cache['screen'][:200]}\nCalendario: {_ctx_cache['calendar'][:200]}"
+                                    optimized = await _gemini_analyze(embedded_action["target"], ctx_summary)
+                                    if optimized and optimized != embedded_action["target"]:
+                                        log.info(f"⚙ Gemini Layer2 ottimizzato prompt Claude: {len(optimized)} chars")
+                                        embedded_action["target"] = optimized
+
+                                # Frase vocale WhyJarv (senza "sir")
                                 if not response_text.strip():
                                     action_type = embedded_action["action"]
                                     if action_type == "prompt_project":
                                         proj = embedded_action["target"].split("|||")[0].strip()
-                                        response_text = f"Connecting to {proj} now, sir."
+                                        response_text = f"Mi connetto a {proj}."
                                     elif action_type == "build":
-                                        response_text = "On it, sir."
+                                        response_text = "Ci penso."
                                     elif action_type == "research":
-                                        response_text = "Looking into that now, sir."
+                                        response_text = "Cerco."
                                     else:
-                                        response_text = "Right away, sir."
+                                        response_text = "Fatto."
 
                                 if embedded_action["action"] == "build":
                                     # Build in background — JARVIS stays conversational
@@ -2444,7 +2497,7 @@ async def voice_handler(ws: WebSocket):
                                         if note:
                                             msg = f"Sir, your note '{note['title']}' says: {note['body'][:200]}"
                                         else:
-                                            msg = f"Couldn't find a note matching '{search_term}', sir."
+                                            msg = f"Couldn't find a note matching '{search_term}'."
                                         await speak_via_browser(strip_markdown_for_tts(msg), ws)
                                     asyncio.create_task(_read_and_report(embedded_action["target"].strip(), ws))
 
