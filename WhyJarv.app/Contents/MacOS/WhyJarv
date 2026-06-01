@@ -1,0 +1,27 @@
+#!/bin/bash
+# WhyJarv macOS App Launcher
+# Trova la directory del progetto e avvia il menu bar Python
+
+# Risolvi il percorso reale (segui symlink)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+
+# Se lanciato da /Applications, cerca WhyJarv in ~/Documents
+if [[ "$APP_DIR" == *"/Applications"* ]]; then
+    PROJECT_DIR="$HOME/Documents/WhyJarv"
+else
+    PROJECT_DIR="$APP_DIR"
+fi
+
+cd "$PROJECT_DIR" || exit 1
+
+# Attiva virtualenv
+PYTHON="$PROJECT_DIR/.venv/bin/python3"
+if [ ! -f "$PYTHON" ]; then
+    # Crea venv se mancante
+    python3 -m venv "$PROJECT_DIR/.venv"
+    "$PROJECT_DIR/.venv/bin/pip" install -q fastapi "uvicorn[standard]" websockets google-genai rumps pyobjc-framework-Cocoa
+fi
+
+# Avvia menu bar app (gestisce tutto: backend, browser, icona)
+exec "$PYTHON" "$PROJECT_DIR/menu_bar.py"
