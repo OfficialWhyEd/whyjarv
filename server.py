@@ -72,6 +72,23 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_DIR = Path(__file__).parent / "workspace"
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
+
+# Groq model cascade — più veloce prima (llama-3.3-70b = 160ms su Groq hardware)
+GROQ_MODELS = [
+    "llama-3.3-70b-versatile",   # 160ms — il più veloce testato
+    "llama-3.1-8b-instant",      # 512ms — fallback lite
+]
+
+# Gemini model cascade
+GEMINI_MODELS = [
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+]
+
 DESKTOP_PATH = Path.home() / "Desktop"
 
 _workspace_cache: dict = {"content": "", "mtime": 0.0}
@@ -1094,52 +1111,134 @@ async def speak_via_browser(text: str, ws: WebSocket):
 # LLM Response
 # ---------------------------------------------------------------------------
 
-GEMINI_MODELS = [
-    "gemini-flash-latest",       # Più recente, massima qualità
-    "gemini-flash-lite-latest",  # Fallback lite, ultra veloce
-    "gemini-3.1-flash-lite",     # Fallback esplicito
-    "gemini-2.5-flash-lite",     # Ultima risorsa
-]
+# ---------------------------------------------------------------------------
+# Conversation AI — Gemini + Groq in parallelo, vince il più veloce
+# ---------------------------------------------------------------------------
 
-
-async def _gemini_chat(full_prompt: str) -> str:
-    """Call Gemini Flash (latest) for instant conversational responses.
-    Cascades through models: flash-latest → flash-lite-latest → fallbacks."""
-    import google.genai as _genai
-
+async def _gemini_chat(prompt: str) -> str:
+    """Gemini cascade: flash-latest → flash-lite-latest → fallbacks."""
     def _sync_call(model: str) -> str:
-        _client = _get_gemini_client()
-        if not _client:
+        c = _get_gemini_client()
+        if not c:
             return ""
-        response = _client.models.generate_content(
-            model=model,
-            contents=full_prompt,
-        )
-        return response.text.strip() if response.text else ""
+        r = c.models.generate_content(model=model, contents=prompt)
+        return r.text.strip() if r.text else ""
 
     loop = asyncio.get_event_loop()
-
     for model in GEMINI_MODELS:
         try:
             result = await asyncio.wait_for(
                 loop.run_in_executor(None, _sync_call, model),
-                timeout=8.0,
+                timeout=7.0,
             )
             if result:
-                log.info(f"Gemini [{model}]: OK ({len(result)} chars)")
+                log.info(f"✓ Gemini [{model}]")
                 return result
         except asyncio.TimeoutError:
-            log.warning(f"Gemini [{model}]: timeout, trying next")
+            log.warning(f"Gemini [{model}]: timeout")
         except Exception as e:
             err = str(e)
-            if "429" in err or "quota" in err.lower():
-                log.warning(f"Gemini [{model}]: rate limit, trying next")
-            elif "404" in err or "not found" in err.lower():
-                log.warning(f"Gemini [{model}]: not available, trying next")
+            if "429" in err or "quota" in err.lower() or "404" in err:
+                log.warning(f"Gemini [{model}]: {err[:60]}")
             else:
-                log.error(f"Gemini [{model}]: {err[:100]}")
+                log.error(f"Gemini [{model}]: {err[:80]}")
+    return ""
 
-    log.warning("All Gemini models failed — falling back to Claude CLI")
+
+_groq_client = None
+
+def _get_groq_client():
+    global _groq_client
+    if _groq_client is None and GROQ_API_KEY:
+        from groq import Groq
+        _groq_client = Groq(api_key=GROQ_API_KEY)
+    return _groq_client
+
+
+async def _groq_chat(prompt: str) -> str:
+    """Groq cascade: llama-3.3-70b (160ms) → llama-3.1-8b-instant."""
+    def _sync_call(model: str) -> str:
+        c = _get_groq_client()
+        if not c:
+            return ""
+        r = c.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0.7,
+        )
+        return r.choices[0].message.content.strip()
+
+    loop = asyncio.get_event_loop()
+    for model in GROQ_MODELS:
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _sync_call, model),
+                timeout=5.0,
+            )
+            if result:
+                log.info(f"✓ Groq [{model}]")
+                return result
+        except asyncio.TimeoutError:
+            log.warning(f"Groq [{model}]: timeout")
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "rate" in err.lower() or "decommissioned" in err.lower():
+                log.warning(f"Groq [{model}]: {err[:60]}")
+            else:
+                log.error(f"Groq [{model}]: {err[:80]}")
+    return ""
+
+
+async def _race_ai(prompt: str) -> str:
+    """Lancia Gemini e Groq in parallelo — risponde chi arriva prima.
+    Il perdente viene cancellato immediatamente.
+    Se entrambi falliscono → Claude CLI."""
+    tasks = []
+    if GEMINI_API_KEY:
+        tasks.append(asyncio.create_task(_gemini_chat(prompt), name="gemini"))
+    if GROQ_API_KEY:
+        tasks.append(asyncio.create_task(_groq_chat(prompt), name="groq"))
+
+    if not tasks:
+        return ""
+
+    try:
+        # Aspetta il primo che risponde
+        done, pending = await asyncio.wait(
+            tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+            timeout=8.0,
+        )
+        # Cancella i task rimasti
+        for t in pending:
+            t.cancel()
+
+        # Prendi il primo risultato non vuoto
+        for t in done:
+            try:
+                result = t.result()
+                if result:
+                    winner = t.get_name()
+                    log.info(f"⚡ Race winner: {winner}")
+                    return result
+            except Exception:
+                pass
+
+        # Se il primo era vuoto, aspetta gli altri (già in done se timeout)
+        for t in done:
+            try:
+                result = t.result()
+                if result:
+                    return result
+            except Exception:
+                pass
+
+    except Exception as e:
+        log.error(f"Race error: {e}")
+        for t in tasks:
+            t.cancel()
+
     return ""
 
 
@@ -1195,13 +1294,13 @@ async def generate_response(
         full_prompt += "\n".join(history_lines) + "\n"
     full_prompt += f"Edoardo: {text}\nWhyJarv:"
 
-    # Use Gemini for pure conversation (fast, <500ms)
-    if GEMINI_API_KEY:
-        gemini_result = await _gemini_chat(full_prompt)
-        if gemini_result:
-            return gemini_result
+    # Race: Gemini vs Groq in parallelo — risponde il più veloce (<300ms atteso)
+    if GEMINI_API_KEY or GROQ_API_KEY:
+        race_result = await _race_ai(full_prompt)
+        if race_result:
+            return race_result
 
-    # Fallback: Claude Code CLI
+    # Fallback finale: Claude Code CLI
     try:
         process = await asyncio.create_subprocess_exec(
             "claude", "--print", "--no-color",
