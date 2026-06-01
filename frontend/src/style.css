@@ -453,7 +453,7 @@ body::before {
   pointer-events: none;
 }
 .hud-tl { top: 24px; left: 24px; }
-.hud-tr { top: 24px; right: 80px; }
+.hud-tr { top: 68px; right: 24px; }
 .hud-bl { bottom: 72px; left: 24px; }
 .hud-br { bottom: 72px; right: 24px; }
 .hud-title {
