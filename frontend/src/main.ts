@@ -165,6 +165,36 @@ function getItalianVoice(): SpeechSynthesisVoice | null {
   );
 }
 
+// Filler naturali — pronunciati IMMEDIATAMENTE mentre Groq elabora.
+// Elimina il silenzio imbarazzante. Fa sembrare WhyJarv umano.
+const FILLERS_IT = ["Mm.", "Sì.", "Un attimo.", "Ci penso.", "Ok."];
+const FILLERS_EN = ["Mm.", "Yeah.", "One sec.", "On it.", "Ok."];
+let _lastFiller = "";
+let _fillerTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function _playFiller(lang: "it" | "en" = "it") {
+  // Riproduci un filler dopo 120ms di silenzio (se la risposta non è ancora arrivata)
+  if (_fillerTimeout) clearTimeout(_fillerTimeout);
+  _fillerTimeout = setTimeout(() => {
+    if (currentState !== "thinking") return;
+    const pool = lang === "it" ? FILLERS_IT : FILLERS_EN;
+    // Non ripetere lo stesso filler due volte di fila
+    const available = pool.filter(f => f !== _lastFiller);
+    const filler = available[Math.floor(Math.random() * available.length)];
+    _lastFiller = filler;
+    const utt = new SpeechSynthesisUtterance(filler);
+    const voice = getItalianVoice();
+    if (voice) utt.voice = voice;
+    utt.rate = 1.0;
+    utt.pitch = 0.95;
+    speechSynthesis.speak(utt);
+  }, 120);  // 120ms — abbastanza per sembrare naturale
+}
+
+function _cancelFiller() {
+  if (_fillerTimeout) { clearTimeout(_fillerTimeout); _fillerTimeout = null; }
+}
+
 // ── Full-duplex barge-in (ispirato a PersonaPlex NVIDIA) ──────────────────
 // WhyJarv sente Edoardo anche mentre parla — si ferma immediatamente.
 // Implementato con Web Audio API + VAD leggero (zero ML, pure DOM).
@@ -257,27 +287,50 @@ socket.onMessage((msg) => {
   const type = msg.type as string;
 
   if (type === "tts") {
+    // Risposta completa — cancella il filler, parla
+    _cancelFiller();
     const text = msg.text as string;
     if (text) { console.log("[WhyJarv]", text); speakText(text); }
     else transition("idle");
+  } else if (type === "tts_sentence") {
+    // Streaming sentence-by-sentence — prima frase parla subito
+    _cancelFiller();
+    const sentence = msg.text as string;
+    if (sentence && sentence.trim()) {
+      if (currentState !== "speaking") transition("speaking");
+      // Accoda la frase nella coda TTS esistente (non interrompe)
+      const utt = new SpeechSynthesisUtterance(sentence.trim());
+      const voice = getItalianVoice();
+      if (voice) utt.voice = voice;
+      utt.lang = "it-IT";
+      utt.rate = 1.1;
+      utt.pitch = 0.9;
+      speechSynthesis.speak(utt);
+    }
+  } else if (type === "tts_end") {
+    // Fine streaming — transizione idle se non c'è altro in coda
+    if (speechSynthesis.pending === false && !speechSynthesis.speaking) {
+      transition("idle");
+    }
   } else if (type === "audio") {
-    // Fallback — non usato in WhyJarv ma compatibile col backend originale
+    _cancelFiller();
     if (msg.text) speakText(msg.text as string);
     else transition("idle");
   } else if (type === "status") {
     const state = msg.state as string;
     if (state === "thinking" && currentState !== "thinking") {
       transition("thinking");
+      _playFiller();  // ← filler immediato, elimina il silenzio
     } else if (state === "working") {
-      // Task spawned — show thinking with a different label
       transition("thinking");
+      _cancelFiller();
       statusEl.textContent = "working...";
     } else if (state === "idle") {
+      _cancelFiller();
       transition("idle");
     }
   } else if (type === "text") {
-    // Text fallback when TTS fails
-    console.log("[JARVIS]", msg.text);
+    console.log("[WhyJarv]", msg.text);
   } else if (type === "task_spawned") {
     console.log("[task]", "spawned:", msg.task_id, msg.prompt);
   } else if (type === "task_complete") {

@@ -1389,7 +1389,7 @@ def _check_speculative(final_text: str) -> str:
 
 
 async def _groq_chat(prompt: str) -> str:
-    """Groq cascade: llama-3.3-70b (160ms) → llama-3.1-8b-instant."""
+    """Groq cascade non-streaming: llama-3.3-70b → llama-3.1-8b."""
     def _sync_call(model: str) -> str:
         c = _get_groq_client()
         if not c:
@@ -1421,6 +1421,81 @@ async def _groq_chat(prompt: str) -> str:
             else:
                 log.error(f"Groq [{model}]: {err[:80]}")
     return ""
+
+
+async def _groq_stream_to_ws(prompt: str, ws) -> bool:
+    """Streaming Groq → frasi al browser appena disponibili.
+    Prima frase in TTS <200ms. Fa sembrare WhyJarv umano come PersonaPlex.
+    Returns True se ha prodotto output, False altrimenti."""
+    import re as _re
+
+    def _stream_call(model: str):
+        c = _get_groq_client()
+        if not c:
+            return None
+        return c.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0.7,
+            stream=True,
+        )
+
+    loop = asyncio.get_event_loop()
+    SENT_RE = _re.compile(r'([^.!?]+[.!?]+)\s*')
+
+    for model in GROQ_MODELS:
+        try:
+            stream = await loop.run_in_executor(None, _stream_call, model)
+            if not stream:
+                continue
+
+            buffer = ""
+            full_text = ""
+            first_sent = False
+
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                if not delta:
+                    continue
+                buffer += delta
+                full_text += delta
+
+                # Ogni volta che abbiamo una frase completa → invia immediatamente
+                while True:
+                    m = SENT_RE.match(buffer)
+                    if not m:
+                        break
+                    sentence = m.group(1).strip()
+                    buffer = buffer[m.end():]
+
+                    if sentence:
+                        if not first_sent:
+                            await ws.send_json({"type": "status", "state": "speaking"})
+                            first_sent = True
+                        await ws.send_json({"type": "tts_sentence", "text": sentence})
+                        log.info(f"⚡ Stream sentence: {sentence[:40]}")
+
+            # Resto del buffer (frase senza punteggiatura finale)
+            remainder = buffer.strip()
+            if remainder:
+                if not first_sent:
+                    await ws.send_json({"type": "status", "state": "speaking"})
+                await ws.send_json({"type": "tts_sentence", "text": remainder})
+
+            await ws.send_json({"type": "tts_end"})
+            log.info(f"✓ Groq stream [{model}]: {len(full_text)} chars")
+            _limiters["groq"].record()
+            return True
+
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "rate" in err.lower():
+                log.warning(f"Groq stream [{model}]: rate limit")
+            else:
+                log.error(f"Groq stream [{model}]: {err[:80]}")
+
+    return False
 
 
 async def _race_ai(prompt: str) -> str:
@@ -2630,6 +2705,30 @@ async def voice_handler(ws: WebSocket):
                         else:
                             response_text = "Understood."
                     else:
+                        # ── FAST PATH: Groq streaming diretto (PersonaPlex-style) ──
+                        # Prima frase parla in <200ms. Nessun silenzio imbarazzante.
+                        fingerprint = _build_fingerprint(history)
+                        world = _get_world_state()
+                        system_core = JARVIS_SYSTEM_PROMPT.format(
+                            user_name=USER_NAME,
+                            workspace_context=_load_workspace_context(),
+                        )
+                        stream_prompt = _build_minimal_prompt(
+                            user_text, fingerprint, world, "", system_core
+                        )
+
+                        streamed = False
+                        if GROQ_API_KEY and _limiters["groq"].can_call():
+                            streamed = await _groq_stream_to_ws(stream_prompt, ws)
+
+                        if streamed:
+                            # Streaming riuscito — aggiorna history e fine
+                            history.append({"role": "user", "content": user_text})
+                            history.append({"role": "assistant", "content": "[streamed]"})
+                            last_jarvis_response = user_text  # approssimazione
+                            continue   # vai al prossimo messaggio WebSocket
+
+                        # Fallback: generate_response standard (race Gemini+Groq)
                         response_text = await generate_response(
                             user_text, None, task_manager,
                             cached_projects, history,
