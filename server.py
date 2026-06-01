@@ -179,21 +179,25 @@ When {user_name} asks to plan his day or schedule, DO NOT dispatch to a project.
 3. Help organize by suggesting time blocks and task order
 4. Use [ACTION:ADD_TASK] to create tasks he agrees to
 5. Use [ACTION:ADD_NOTE] to save the plan as a note
-Keep the planning conversational — don't try to do everything in one response.
+Pianifica e agisci. Usa [ACTION:ADD_TASK] e [ACTION:ADD_NOTE] direttamente, senza conversazione.
 
 BUILD PLANNING:
 When {user_name} wants to BUILD something new:
-- Do NOT immediately dispatch [ACTION:BUILD]. Ask 1-2 quick questions FIRST to nail down specifics.
-- Good questions: "What should this look like?" / "Any specific features?" / "Which framework?"
-- If he says "just build it" or "figure it out" — skip questions, use React + Tailwind as defaults.
+- Se hai abbastanza contesto, dispatcha [ACTION:BUILD] subito. Non chiedere conferma.
+- Default: React + Tailwind. Se dice "just build it" — build it.
+- Se manca info critica (es. quale API usare), fai UNA sola domanda, poi agisci.
 - Once you have enough info, confirm the plan in ONE sentence and THEN dispatch [ACTION:BUILD] with a detailed description.
 - The DISPATCHES section shows what you're currently building and what finished recently.
 - When asked "where are we at" or "status" — check DISPATCHES, don't re-dispatch.
 - NEVER hallucinate progress. If the build is still running, say "Still working on it, sir" — don't make up details about what's happening.
 - NEVER guess localhost ports. Check the DISPATCHES section for the actual URL. If a dispatch says "Running at http://localhost:5174" — use THAT URL, not a guess.
 - When asked to "pull it up" or "show me" — use [ACTION:BROWSE] with the URL from DISPATCHES. Do NOT dispatch to the project again just to find the URL.
-IMPORTANT: Actions like opening Terminal, Chrome, or building projects are handled AUTOMATICALLY by your system — you do NOT need to describe doing them. If the user asks you to build something or search something, your system will handle the execution separately. In your response, just TALK — have a conversation. Don't say "I'll build that now" or "Claude Code is working on..." unless your system has actually triggered the action.
-If the user asks you to do something you genuinely can't do, say "I'm afraid that's beyond my current reach, sir." Don't fake executing actions.
+IMPORTANTE — PROTOCOLLO DI OUTPUT:
+Le azioni vengono eseguite dal sistema automaticamente. La tua risposta vocale deve essere minima.
+Formato ideale: "Fatto." / "On it." / "Apro." — poi l'azione nel tag.
+NON descrivere cosa stai facendo. Fallo e basta.
+Log style quando utile: "Task: [azione] | Status: Done"
+Se non puoi fare qualcosa: "Fuori dalla mia portata." — niente spiegazioni.
 
 YOUR INTERFACE:
 The user interacts with you through a web browser showing a particle orb visualization that reacts to your voice. The interface has these controls:
@@ -260,7 +264,7 @@ IMPORTANT:
 - Do NOT use action tags for casual conversation
 - Do NOT use action tags if the user is still explaining (ask questions first)
 - Do NOT use [ACTION:BROWSE] just because someone mentions a URL in conversation
-- When in doubt, just TALK — you can always act later
+- Quando hai dubbi, agisci — puoi sempre correggere dopo
 
 
 Il contesto di schermo, calendario, email e task viene iniettato dinamicamente ad ogni risposta.
@@ -1660,13 +1664,31 @@ async def generate_response(
 
     full_prompt = minimal_prompt   # ~300 token invece di ~2000
 
+    # ── METRICS ──────────────────────────────────────────────────────────────
+    _t0 = time.time()
+
+    def _write_metrics(layer: str, latency_ms: int, input_text: str):
+        try:
+            metrics_file = Path(__file__).parent / "whyjarv_metrics.log"
+            entry = (
+                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
+                f"Layer: {layer} | Latency: {latency_ms}ms | "
+                f"Input: {input_text[:60].replace(chr(10), ' ')}\n"
+            )
+            with open(metrics_file, "a") as f:
+                f.write(entry)
+            if latency_ms > 2000:
+                log.warning(f"⚠ SLOW RESPONSE — {latency_ms}ms via {layer}. Bottleneck detected.")
+        except Exception:
+            pass
+
     # ── LAYER 1+2: GROQ + GEMINI race con rate limit awareness ──
     if groq_available or gemini_available:
-        # Registra le chiamate prima di farle
         if groq_available:   _limiters["groq"].record()
         if gemini_available: _limiters["gemini"].record()
 
         race_result = await _race_ai(full_prompt)
+        _write_metrics("Groq/Gemini", int((time.time() - _t0) * 1000), text)
         if race_result:
             log.info(f"📊 Usage — Groq: {_limiters['groq'].usage()}, Gemini: {_limiters['gemini'].usage()}")
             return race_result
@@ -1686,8 +1708,10 @@ async def generate_response(
             process.communicate(input=full_prompt.encode()),
             timeout=60,
         )
+        _write_metrics("Claude-CLI", int((time.time() - _t0) * 1000), text)
         return stdout.decode().strip() or "Un momento."
     except asyncio.TimeoutError:
+        _write_metrics("Claude-CLI-TIMEOUT", int((time.time() - _t0) * 1000), text)
         return "Ci sto lavorando, ma ci vuole più tempo del solito."
     except Exception as e:
         log.error(f"Claude CLI error: {e}")
