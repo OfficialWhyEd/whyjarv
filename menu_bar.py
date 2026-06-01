@@ -13,7 +13,7 @@ import json
 import urllib.request
 from pathlib import Path
 
-DIR = Path(__file__).parent
+DIR = Path.home() / "Documents" / "WhyJarv"
 BACKEND_URL = "http://localhost:8340"
 POLL_INTERVAL = 0.8  # seconds
 
@@ -60,60 +60,48 @@ class WhyJarvApp(rumps.App):
             rumps.MenuItem("Quit", callback=self._quit),
         ]
 
-        # Avvia backend all'apertura
-        self._start_backend()
+        # Avvia backend in background (non blocca l'icona)
+        threading.Thread(target=self._start_backend, daemon=True).start()
 
         # Polling thread
         t = threading.Thread(target=self._poll_loop, daemon=True)
         t.start()
 
     def _start_backend(self):
-        """Avvia il backend Python se non è già in esecuzione."""
+        """Avvia il backend via osascript (bypassa TCC su ~/Documents)."""
         try:
-            # Check se già in esecuzione
             urllib.request.urlopen(f"{BACKEND_URL}/api/health", timeout=1)
-            print("[menu_bar] Backend già in esecuzione")
+            # Già in esecuzione — apri solo il browser
+            threading.Timer(0.5, lambda: webbrowser.open(BACKEND_URL)).start()
             return
         except Exception:
             pass
 
-        print("[menu_bar] Avvio backend...")
-        venv_python = DIR / ".venv" / "bin" / "python3"
-        python = str(venv_python) if venv_python.exists() else sys.executable
-
-        # Carica .env
-        env_file = DIR / ".env"
-        env = os.environ.copy()
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, _, v = line.partition("=")
-                    env[k.strip()] = v.strip()
-
-        proc = subprocess.Popen(
-            [python, str(DIR / "server.py")],
-            cwd=str(DIR),
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        # Avvia server.py tramite osascript che ha accesso completo a ~/Documents
+        script = (
+            'do shell script '
+            '"~/.whyjarv-venv/bin/python3 ~/Documents/WhyJarv/server.py '
+            '>> /tmp/wj_server.log 2>&1 &"'
         )
-        self._backend_pid = proc.pid
-        print(f"[menu_bar] Backend avviato PID={proc.pid}")
+        try:
+            subprocess.Popen(
+                ["osascript", "-e", script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            print(f"[menu_bar] Errore avvio backend: {e}")
 
-        # Aspetta che sia pronto
-        for _ in range(15):
+        # Aspetta che sia pronto (max 10s)
+        for _ in range(20):
             time.sleep(0.5)
             try:
                 urllib.request.urlopen(f"{BACKEND_URL}/api/health", timeout=1)
-                print("[menu_bar] Backend pronto")
                 break
             except Exception:
                 pass
 
-        # Apri browser
-        time.sleep(0.3)
-        webbrowser.open(BACKEND_URL)
+        threading.Timer(0.3, lambda: webbrowser.open(BACKEND_URL)).start()
 
     def _poll_loop(self):
         """Aggiorna icona in base allo stato del backend."""
