@@ -1,60 +1,89 @@
-# ⚡ WhyJarv
+<p align="center">
+  <img src="assets/banner.png" alt="WhyJarv" width="100%"/>
+</p>
 
-**Il Jarvis personale di Edoardo Porcu (@whyed).**  
-Costruito da zero, vive nel tuo Mac, ti conosce, e fa tutto — esattamente come Jarvis.
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" />
+  <img src="https://img.shields.io/badge/Groq-LLaMA_70B-F55036?style=flat-square" />
+  <img src="https://img.shields.io/badge/Gemini-Flash-4285F4?style=flat-square&logo=google&logoColor=white" />
+  <img src="https://img.shields.io/badge/macOS-Monterey+-000000?style=flat-square&logo=apple&logoColor=white" />
+  <img src="https://img.shields.io/badge/status-active-brightgreen?style=flat-square" />
+</p>
+
+<br/>
+
+> Un assistente vocale personale che gira interamente in locale sul Mac. Risponde in meno di 300ms, esegue azioni reali tramite Claude Code CLI, e ti conosce attraverso una memoria persistente.
 
 ---
 
-## Architettura
+## Come funziona
 
 ```
-Voce → Apple STT → Gemini Flash (conversazione) → Apple TTS → risposta
-                 ↘ Claude Code CLI (azioni) ↗
+Voce → Apple STT → Groq LLaMA 70B ──────────────────→ Apple TTS
+                         ↓ (se serve un'azione)
+                   Gemini Flash (compressione contesto)
+                         ↓
+                   Claude Code CLI (esegue)
 ```
 
 | Layer | Tecnologia | Latenza |
 |-------|-----------|---------|
-| **STT** | Apple Web Speech API (nativo browser) | ~200ms |
-| **Conversazione** | Gemini flash-latest → flash-lite-latest (cascade) | <500ms |
-| **Azioni** | Claude Code CLI + tutti i MCP | 3-8s |
-| **TTS** | Apple speechSynthesis voce Federica | <50ms |
-| **UI** | Three.js orb signal-orange + 4 HUD panels | 60fps |
+| **STT** | Apple Web Speech API | ~200ms |
+| **Conversazione** | Groq LLaMA 3.3 70B | <300ms |
+| **Azioni** | Claude Code CLI + MCP | 3–8s |
+| **TTS** | Apple speechSynthesis — voce Federica | <50ms |
+| **Memoria** | SQLite locale + TF-IDF retrieval | istantaneo |
 
-## Avvio
+---
 
-**Apri l'app:**
-```
-/Applications/WhyJarv.app
-```
+## Features
 
-Oppure da terminale:
+- **Risposta istantanea** — Groq in race con Gemini, vince il più veloce
+- **Azioni reali** — apre app, scrive codice, controlla il Mac via AppleScript
+- **Memoria persistente** — ricorda chi sei, cosa fai, le tue preferenze
+- **Zero cloud storage** — tutto gira in locale, nessun dato esce dal Mac
+- **Menu bar nativa** — icona WJ sempre in alto a destra, avvio silenzioso
+- **Wake word** — di' "Let's start" per attivare, "chiuditi" per spegnere
+
+---
+
+## Stack
+
+- **Backend**: FastAPI + WebSocket su `:8340`
+- **Frontend**: React + Three.js (orb signal-orange `#c94b25`)
+- **AI**: Groq LLaMA 3.3 70B · Gemini Flash · Claude Code CLI
+- **TTS/STT**: Apple nativo (Web Speech API + speechSynthesis)
+- **Memoria**: SQLite + TF-IDF (memory_store.py)
+
+---
+
+## Avvio rapido
+
 ```bash
-cd ~/Documents/WhyJarv && ./start.sh
+git clone https://github.com/OfficialWhyEd/WhyJarv
+cd WhyJarv
+
+cp .env.example .env   # aggiungi GEMINI_API_KEY e GROQ_API_KEY
+./start.sh             # avvia backend + browser
 ```
 
 Di' **"Let's start"** per attivare.
 
-## Design
-
-WhyJarv usa il design system WhyEd:
-- `#c94b25` signal orange — colore primario orb
-- `#08090e` void black — sfondo
-- Bebas Neue + JetBrains Mono + Outfit
-
-Nessun cyan. Nessun blue generico. Inconfondibilmente @whyed.
+---
 
 ## Struttura
 
 ```
 WhyJarv/
-├── server.py          — FastAPI backend + WebSocket + Gemini + Claude CLI
-├── menu_bar.py        — macOS menu bar icon (rumps)
-├── WhyJarv.app/       — App bundle per /Applications
-├── frontend/          — Three.js + TypeScript + Vite
-├── workspace/         — MD files: IDENTITY, SOUL, USER, MEMORY, CONTEXT
-└── start.sh           — Avvio rapido
+├── server.py          # FastAPI + WebSocket + AI pipeline
+├── memory_store.py    # memoria atomica SQLite + TF-IDF
+├── menu_bar.py        # icona macOS menu bar
+├── frontend/
+│   ├── src/orb.ts     # Three.js particle orb
+│   └── src/main.ts    # state machine, barge-in
+└── workspace/         # identità e contesto del bot (MD files)
 ```
 
-## GitHub
+---
 
-[github.com/OfficialWhyEd/whyjarv](https://github.com/OfficialWhyEd/whyjarv)
+<p align="center">Built by <a href="https://github.com/OfficialWhyEd">@whyed</a> · macOS only · no cloud required</p>
