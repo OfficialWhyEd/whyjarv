@@ -71,20 +71,32 @@
     .btn-ghost { display: inline-flex; align-items: center; gap: .5rem; font-family: 'Satoshi',sans-serif; font-size: .95rem; font-weight: 600; padding: .75rem 1.5rem; border-radius: 8px; background: transparent; color: var(--sub); border: 1px solid rgba(255,255,255,.1); cursor: pointer; text-decoration: none; transition: border-color .2s, color .2s; }
     .btn-ghost:hover { border-color: rgba(255,255,255,.25); color: var(--text); }
     .hero-visual { position: relative; z-index: 2; }
-    .orb-wrap { display: flex; justify-content: center; align-items: center; position: relative; margin-bottom: 2rem; }
-    .orb-glow { position: absolute; width: 240px; height: 240px; background: radial-gradient(circle, rgba(201,75,37,.28) 0%, transparent 70%); animation: breathe 5s ease-in-out infinite; }
-    @keyframes breathe { 0%,100%{transform:scale(1);opacity:.6} 50%{transform:scale(1.2);opacity:1} }
-    .orb-img { height: 110px; position: relative; z-index: 1; filter: drop-shadow(0 0 20px rgba(201,75,37,.5)); }
-    .terminal { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; font-family: var(--mono); font-size: .8rem; box-shadow: 0 24px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04); }
-    .terminal-bar { display: flex; align-items: center; gap: .5rem; padding: .7rem 1rem; background: rgba(255,255,255,.025); border-bottom: 1px solid var(--border); }
-    .dot { width: 10px; height: 10px; border-radius: 50%; }
-    .dot-r{background:#ff5f57;} .dot-y{background:#febc2e;} .dot-g{background:#28c840;}
-    .terminal-title { font-family: 'Satoshi',sans-serif; font-size:.72rem; color: var(--dim); margin-left: auto; letter-spacing:.04em; }
-    .terminal-body { padding: 1.25rem 1.5rem; line-height: 1.85; height: 18rem; overflow: hidden; }
-    .t-user { color: var(--orange); } .t-ai { color: #d4c4b8; } .t-dim { color: var(--dim); } .t-sys { color: #7eb8f7; }
-    .t-line { margin-bottom: .1rem; }
-    .cursor { display: inline-block; width: 7px; height: 1em; background: var(--orange); vertical-align: text-bottom; animation: blink 1.1s step-end infinite; margin-left: 1px; }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    /* ── RACE VISUAL ── */
+    .race-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 1.75rem; box-shadow: 0 24px 48px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04); }
+    .race-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+    .race-label { font-family: var(--mono); font-size: .6rem; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+    .race-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #28c840; animation: blink-live 1.6s ease-in-out infinite; }
+    .race-prompt { font-family: var(--mono); font-size: .75rem; color: rgba(201,75,37,.8); background: rgba(201,75,37,.07); border: 1px solid rgba(201,75,37,.18); border-radius: 8px; padding: .6rem .85rem; margin-bottom: 1.4rem; line-height: 1.5; }
+    .race-rows { display: flex; flex-direction: column; gap: .85rem; margin-bottom: 1.2rem; }
+    .race-row { display: grid; grid-template-columns: 7rem 1fr 3.5rem; align-items: center; gap: .75rem; }
+    .race-model { display: flex; flex-direction: column; }
+    .race-model-name { font-size: .82rem; font-weight: 700; color: var(--text); }
+    .race-model-sub { font-family: var(--mono); font-size: .58rem; color: var(--dim); margin-top: .1rem; }
+    .race-track { height: 6px; background: rgba(255,255,255,.06); border-radius: 99px; overflow: hidden; }
+    .race-fill { height: 100%; width: 0%; border-radius: 99px; background: var(--orange); transition: width .05s linear; }
+    .race-time { font-family: var(--mono); font-size: .72rem; color: var(--dim); text-align: right; }
+    .race-time.winner { color: var(--orange); font-weight: 700; }
+    .race-result { min-height: 1.6rem; display: flex; align-items: center; gap: .6rem; margin-bottom: 1.1rem; }
+    .race-winner-badge { font-family: var(--mono); font-size: .62rem; letter-spacing: .08em; padding: .2rem .6rem; border-radius: 4px; background: rgba(201,75,37,.15); border: 1px solid rgba(201,75,37,.35); color: var(--orange); text-transform: uppercase; }
+    .race-result-text { font-size: .8rem; color: var(--sub); }
+    .race-divider { border: none; border-top: 1px solid var(--border); margin-bottom: 1.1rem; }
+    .race-claude-row { display: flex; align-items: center; justify-content: space-between; }
+    .race-claude-label { font-family: var(--mono); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+    .race-claude-status { font-family: var(--mono); font-size: .72rem; color: var(--sub); }
+    .race-claude-status.running { color: #7eb8f7; }
+    .race-claude-status.done { color: #28c840; }
+    .waveform-wrap { margin-top: 1.25rem; height: 48px; overflow: hidden; }
+    .waveform-svg { width: 100%; height: 100%; }
 
     section { padding: 7rem 3rem; }
     .section-label { font-family: var(--mono); font-size: .6rem; font-weight: 400; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); margin-bottom: .85rem; }
@@ -242,28 +254,48 @@
     </div>
   </div>
   <div class="hero-visual enter-5">
-    <div class="orb-wrap">
-      <div class="orb-glow"></div>
-      <img class="orb-img" src="logo.png" alt="WJ" />
+    <div class="race-card">
+      <div class="race-header">
+        <span class="race-label">PARALLEL RACE · LIVE</span>
+        <span class="race-live-dot"></span>
+      </div>
+      <div class="race-prompt">"Open Xcode and show me the build errors"</div>
+      <div class="race-rows">
+        <div class="race-row" id="rr-groq">
+          <div class="race-model">
+            <span class="race-model-name">Groq</span>
+            <span class="race-model-sub">LLaMA 3.3 70B</span>
+          </div>
+          <div class="race-track">
+            <div class="race-fill" id="rf-groq"></div>
+          </div>
+          <div class="race-time" id="rt-groq">—</div>
+        </div>
+        <div class="race-row" id="rr-gemini">
+          <div class="race-model">
+            <span class="race-model-name">Gemini</span>
+            <span class="race-model-sub">Flash 2.0</span>
+          </div>
+          <div class="race-track">
+            <div class="race-fill" id="rf-gemini"></div>
+          </div>
+          <div class="race-time" id="rt-gemini">—</div>
+        </div>
+      </div>
+      <div class="race-result" id="race-result">
+        <span class="race-winner-badge" id="race-winner-badge"></span>
+        <span class="race-result-text" id="race-result-text"></span>
+      </div>
+      <div class="race-divider"></div>
+      <div class="race-claude-row">
+        <span class="race-claude-label">Claude MCP</span>
+        <span class="race-claude-status" id="claude-status">waiting…</span>
+      </div>
     </div>
-    <div class="terminal">
-      <div class="terminal-bar">
-        <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
-        <span class="terminal-title">whyjarv — voice pipeline</span>
-      </div>
-      <div class="terminal-body" id="tb">
-        <div class="t-line t-dim">// wake word detected: "Let's start"</div>
-        <div class="t-line t-dim">// STT: Apple Web Speech API</div>
-        <div class="t-line" style="margin-top:.5rem"><span class="t-user">you</span>&nbsp;&nbsp;&nbsp; "Open Xcode and tell me if the build passed"</div>
-        <div class="t-line t-dim">// groq LLaMA-70b → firing...</div>
-        <div class="t-line t-dim">// gemini-flash  → firing...</div>
-        <div class="t-line t-dim">// groq wins in 247ms</div>
-        <div class="t-line" style="margin-top:.5rem"><span class="t-ai">whyjarv</span> "Checking Xcode now..."</div>
-        <div class="t-line t-dim">// routing to Claude Code CLI via MCP</div>
-        <div class="t-line t-dim">// MCP: open Xcode, read build log</div>
-        <div class="t-line" style="margin-top:.5rem"><span class="t-sys">system</span> "Xcode: Build Succeeded — 0 errors, 2 warnings"</div>
-        <div class="t-line" style="margin-top:.5rem"><span class="t-ai">whyjarv</span> "Build passed. Zero errors.<span class="cursor"></span>"</div>
-      </div>
+    <div class="waveform-wrap">
+      <svg class="waveform-svg" viewBox="0 0 440 48" preserveAspectRatio="none">
+        <polyline id="wave-line" fill="none" stroke="rgba(201,75,37,0.55)" stroke-width="1.5" points=""/>
+      </svg>
     </div>
   </div>
 </section>
@@ -468,25 +500,77 @@
   }, { threshold: 0.1 });
   document.querySelectorAll('.reveal, .prompts-grid, .philosophy-grid, .features-grid, .arch-stats').forEach(el => io.observe(el));
 
-  // Terminal typewriter
-  const scenes = [
-    [['dim','// clap×2 detected'],['dim','// STT: Apple Web Speech API'],['user','"Open Xcode and tell me if the build passed"'],['dim','// groq wins in 247ms'],['ai','Checking Xcode now...'],['dim','// MCP: open Xcode → read build log'],['sys','Xcode: Build Succeeded — 0 errors'],['ai','Build passed. Zero errors.']],
-    [['dim','// wake word: "Let\'s start"'],['user','"What did we talk about yesterday re: WhyPost?"'],['dim','// TF-IDF retrieval over conversation history'],['dim','// match found: session 2026-06-06 14:32'],['ai','Yesterday at 14:32 we discussed the cron job schedule — you wanted posts at 9am.'],['sys','memory: 847 indexed entries']],
-  ];
-  let scene = 0, lineIdx = 0;
-  const tb = document.getElementById('tb');
-  function addLine() {
-    const s = scenes[scene];
-    if (lineIdx >= s.length) { scene = (scene + 1) % scenes.length; lineIdx = 0; setTimeout(() => { tb.innerHTML = ''; addLine(); }, 3500); return; }
-    const [t, txt] = s[lineIdx++];
-    const d = document.createElement('div'); d.className = 't-line';
-    const lbl = t === 'user' ? '<span class="t-user">you</span>&nbsp;&nbsp;&nbsp; ' : t === 'ai' ? '<span class="t-ai">whyjarv</span> ' : t === 'sys' ? '<span class="t-sys">system</span>  ' : '';
-    d.innerHTML = lbl + txt;
-    if (lineIdx === s.length) d.innerHTML += '<span class="cursor"></span>';
-    tb.appendChild(d); tb.scrollTop = tb.scrollHeight;
-    setTimeout(addLine, t === 'dim' ? 260 : 580);
-  }
-  setTimeout(() => { tb.innerHTML = ''; addLine(); }, 2500);
+  /* race animation */
+  (function(){
+    const groqFill = document.getElementById('rf-groq');
+    const gemFill  = document.getElementById('rf-gemini');
+    const groqTime = document.getElementById('rt-groq');
+    const gemTime  = document.getElementById('rt-gemini');
+    const badge    = document.getElementById('race-winner-badge');
+    const resultTxt= document.getElementById('race-result-text');
+    const claudeSt = document.getElementById('claude-status');
+    const waveLine = document.getElementById('wave-line');
+
+    function runRace(){
+      groqFill.style.width = '0%';
+      gemFill.style.width  = '0%';
+      groqTime.textContent = '—'; groqTime.classList.remove('winner');
+      gemTime.textContent  = '—'; gemTime.classList.remove('winner');
+      badge.textContent = ''; resultTxt.textContent = '';
+      claudeSt.textContent = 'waiting…'; claudeSt.className = 'race-claude-status';
+
+      const groqMs  = 220 + Math.floor(Math.random()*80);
+      const gemMs   = 260 + Math.floor(Math.random()*120);
+      const totalMs = Math.max(groqMs, gemMs) + 60;
+      const start   = performance.now();
+
+      let groqDone = false, gemDone = false;
+
+      function tick(){
+        const elapsed = performance.now() - start;
+        const pct = Math.min(elapsed / totalMs, 1);
+
+        groqFill.style.width = Math.min(elapsed / groqMs, 1) * 100 + '%';
+        gemFill.style.width  = Math.min(elapsed / gemMs,  1) * 100 + '%';
+
+        if(elapsed >= groqMs && !groqDone){
+          groqDone = true;
+          groqTime.textContent = groqMs + 'ms';
+          groqTime.classList.add('winner');
+          badge.textContent = 'Groq wins';
+          resultTxt.textContent = groqMs + 'ms · connection cancelled';
+          claudeSt.textContent = 'opening Xcode…';
+          claudeSt.className = 'race-claude-status running';
+        }
+        if(elapsed >= gemMs && !gemDone){
+          gemDone = true;
+          gemTime.textContent = gemMs + 'ms';
+        }
+        if(pct < 1){ requestAnimationFrame(tick); }
+        else {
+          claudeSt.textContent = 'done · build errors read ✓';
+          claudeSt.className = 'race-claude-status done';
+          setTimeout(runRace, 3200);
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+    runRace();
+
+    /* waveform */
+    let wt = 0;
+    function drawWave(){
+      wt += 0.04;
+      const pts = [];
+      for(let i=0;i<=440;i+=4){
+        const y = 24 + Math.sin(i*0.025 + wt)*10 + Math.sin(i*0.05 + wt*1.3)*5;
+        pts.push(i+','+y.toFixed(1));
+      }
+      waveLine.setAttribute('points', pts.join(' '));
+      requestAnimationFrame(drawWave);
+    }
+    drawWave();
+  })();
 </script>
 </body>
 </html>
