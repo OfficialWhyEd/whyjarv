@@ -2,16 +2,60 @@
 WhyJarv Menu Bar App
 macOS system tray icon con stato real-time e pannello di controllo veloce.
 """
+import atexit
 import rumps
 import subprocess
 import threading
 import webbrowser
 import os
 import sys
+import signal
 import time
 import json
 import urllib.request
 from pathlib import Path
+
+_PID_FILE = "/tmp/wj_server.pid"
+
+def _kill_server():
+    """Killa server + chiude Chrome — chiamato da atexit, SIGTERM e _quit."""
+    # Chiudi tab Chrome su localhost:8340
+    try:
+        subprocess.Popen(
+            ["osascript", "-e",
+             'tell application "Google Chrome" to close '
+             '(every tab of every window whose URL starts with "http://localhost:8340")'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+    # Killa il server tramite PID file
+    try:
+        pid = int(open(_PID_FILE).read().strip())
+        os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+    # Fallback: pkill per nome
+    try:
+        subprocess.Popen(
+            ["pkill", "-f", "server.py"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+    # Rimuovi PID file
+    try:
+        os.remove(_PID_FILE)
+    except Exception:
+        pass
+
+def _sigterm_handler(sig, frame):
+    _kill_server()
+    import sys as _sys
+    _sys.exit(0)
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
+atexit.register(_kill_server)
 
 # Nasconde dal Dock PRIMA che rumps avvii il run loop
 try:
@@ -48,11 +92,16 @@ STATE_LABELS = {
 }
 
 
+ICON_PATH = str(Path(__file__).parent / "wj_menubar.png")
+
+
 class WhyJarvApp(rumps.App):
     def __init__(self):
         super().__init__(
             name="WhyJarv",
-            title=STATE_ICONS["offline"],
+            icon=ICON_PATH if Path(ICON_PATH).exists() else None,
+            title=None if Path(ICON_PATH).exists() else STATE_ICONS["offline"],
+            template=True,
             quit_button=None,
         )
 
@@ -96,9 +145,7 @@ class WhyJarvApp(rumps.App):
         """Avvia il backend via osascript (bypassa TCC su ~/Documents)."""
         try:
             urllib.request.urlopen(f"{BACKEND_URL}/api/health", timeout=1)
-            # Già in esecuzione — apri solo il browser
-            threading.Timer(0.5, lambda: webbrowser.open(BACKEND_URL)).start()
-            return
+            return  # backend già attivo, non aprire nulla
         except Exception:
             pass
 
@@ -125,8 +172,6 @@ class WhyJarvApp(rumps.App):
                 break
             except Exception:
                 pass
-
-        threading.Timer(0.3, lambda: webbrowser.open(BACKEND_URL)).start()
 
     def _poll_loop(self):
         """Aggiorna icona in base allo stato del backend."""
@@ -188,11 +233,7 @@ class WhyJarvApp(rumps.App):
     def _quit(self, _):
         """Ferma il backend e chiude l'app."""
         self._polling = False
-        if self._backend_pid:
-            try:
-                os.kill(self._backend_pid, 15)  # SIGTERM
-            except Exception:
-                pass
+        _kill_server()
         rumps.quit_application()
 
 

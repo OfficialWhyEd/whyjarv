@@ -18,6 +18,7 @@ import "./style.css";
 type State = "idle" | "listening" | "thinking" | "speaking";
 let currentState: State = "idle";
 let isMuted = false;
+let pythonControlled = false;  // quando true: Python gestisce tutto, browser solo display
 
 const statusEl = document.getElementById("status-text")!;
 const errorEl = document.getElementById("error-text")!;
@@ -105,10 +106,10 @@ let _lastInterimLen = 0;
 let _bcCooldown = false;
 
 function _triggerBackchannel() {
-  if (_bcCooldown || currentState !== "listening") return;
+  if (_bcCooldown || currentState !== "listening" || pythonControlled) return;
   const bc = BACKCHANNELS_IT[Math.floor(Math.random() * BACKCHANNELS_IT.length)];
   const utt = new SpeechSynthesisUtterance(bc);
-  const voice = getItalianVoice();
+  const voice = getJarvisVoice();
   if (voice) utt.voice = voice;
   utt.rate = 1.05; utt.pitch = 1.0; utt.volume = 0.7;  // più sottile, non invadente
   speechSynthesis.speak(utt);
@@ -126,7 +127,7 @@ function _onInterimForBackchannel(text: string) {
   _lastInterimLen = len;
 }
 
-const WAKE_WORDS = ["let's start", "lets start", "inizia", "hey jarvis", "whyjarv"];
+const WAKE_WORDS = ["iniziamo", "whyjarv", "why jarv", "why jarvis"];
 let isAwake = false;
 
 const voiceInput = createVoiceInput(
@@ -189,12 +190,14 @@ audioPlayer.onFinished(() => {
 // ---------------------------------------------------------------------------
 
 // ── Web Speech Synthesis — Apple TTS nativo, latenza <50ms ──────────────────
-function getItalianVoice(): SpeechSynthesisVoice | null {
+function getJarvisVoice(): SpeechSynthesisVoice | null {
   const voices = speechSynthesis.getVoices();
   return (
-    voices.find(v => v.name === "Federica") ||
-    voices.find(v => v.lang === "it-IT" && v.localService) ||
-    voices.find(v => v.lang.startsWith("it") && v.localService) ||
+    voices.find(v => v.name === "Daniel") ||                          // en-GB British male — il più simile a Jarvis
+    voices.find(v => v.name === "Arthur") ||                          // en-GB alternativo
+    voices.find(v => v.lang === "en-GB" && v.localService) ||
+    voices.find(v => v.name === "Alex") ||                            // en-US fallback
+    voices.find(v => v.lang === "en-US" && v.localService) ||
     voices.find(v => v.localService) ||
     voices[0] || null
   );
@@ -208,17 +211,16 @@ let _lastFiller = "";
 let _fillerTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function _playFiller(lang: "it" | "en" = "it") {
-  // Riproduci un filler dopo 120ms di silenzio (se la risposta non è ancora arrivata)
   if (_fillerTimeout) clearTimeout(_fillerTimeout);
   _fillerTimeout = setTimeout(() => {
-    if (currentState !== "thinking") return;
+    if (currentState !== "thinking" || pythonControlled) return;
     const pool = lang === "it" ? FILLERS_IT : FILLERS_EN;
     // Non ripetere lo stesso filler due volte di fila
     const available = pool.filter(f => f !== _lastFiller);
     const filler = available[Math.floor(Math.random() * available.length)];
     _lastFiller = filler;
     const utt = new SpeechSynthesisUtterance(filler);
-    const voice = getItalianVoice();
+    const voice = getJarvisVoice();
     if (voice) utt.voice = voice;
     utt.rate = 1.0;
     utt.pitch = 0.95;
@@ -304,9 +306,8 @@ function speakText(text: string) {
       return;
     }
     const utt = new SpeechSynthesisUtterance(sentences[idx++].trim());
-    const voice = getItalianVoice();
+    const voice = getJarvisVoice();
     if (voice) utt.voice = voice;
-    utt.lang = "it-IT";
     utt.rate = 1.1;
     utt.pitch = 0.9;
     utt.onend = speakNext;
@@ -316,28 +317,26 @@ function speakText(text: string) {
   speakNext();
 }
 
-speechSynthesis.onvoiceschanged = () => { getItalianVoice(); };
+speechSynthesis.onvoiceschanged = () => { getJarvisVoice(); };
 
 socket.onMessage((msg) => {
   const type = msg.type as string;
 
   if (type === "tts") {
-    // Risposta completa — cancella il filler, parla
     _cancelFiller();
+    if (pythonControlled) return;  // Python gestisce TTS, browser silenzioso
     const text = msg.text as string;
     if (text) { console.log("[WhyJarv]", text); speakText(text); }
     else transition("idle");
   } else if (type === "tts_sentence") {
-    // Streaming sentence-by-sentence — prima frase parla subito
     _cancelFiller();
+    if (pythonControlled) return;  // Python gestisce TTS, browser silenzioso
     const sentence = msg.text as string;
     if (sentence && sentence.trim()) {
       if (currentState !== "speaking") transition("speaking");
-      // Accoda la frase nella coda TTS esistente (non interrompe)
       const utt = new SpeechSynthesisUtterance(sentence.trim());
-      const voice = getItalianVoice();
+      const voice = getJarvisVoice();
       if (voice) utt.voice = voice;
-      utt.lang = "it-IT";
       utt.rate = 1.1;
       utt.pitch = 0.9;
       speechSynthesis.speak(utt);
@@ -349,21 +348,45 @@ socket.onMessage((msg) => {
     }
   } else if (type === "audio") {
     _cancelFiller();
+    if (pythonControlled) return;
     if (msg.text) speakText(msg.text as string);
     else transition("idle");
   } else if (type === "status") {
     const state = msg.state as string;
     if (state === "thinking" && currentState !== "thinking") {
       transition("thinking");
-      _playFiller();  // ← filler immediato, elimina il silenzio
+      if (!pythonControlled) _playFiller();  // filler solo se browser gestisce TTS
     } else if (state === "working") {
-      transition("thinking");
       _cancelFiller();
-      statusEl.textContent = "working...";
+      if (!pythonControlled) { transition("thinking"); statusEl.textContent = "working..."; }
     } else if (state === "idle") {
       _cancelFiller();
-      transition("idle");
+      if (!pythonControlled) transition("idle");
     }
+  } else if (type === "python_mode") {
+    // Python gestisce STT+TTS — browser in display-only, niente voce locale
+    pythonControlled = true;
+    isAwake = true;
+    speechSynthesis.cancel();
+    voiceInput.pause();          // stop STT browser
+    transition("listening");
+  } else if (type === "python_idle") {
+    // Python ha finito — browser torna normale
+    pythonControlled = false;
+    isAwake = false;
+    speechSynthesis.cancel();
+    _cancelFiller();
+    transition("idle");
+  } else if (type === "wake") {
+    // Wake dal browser stesso (standalone senza Python)
+    if (!pythonControlled) {
+      isAwake = true;
+      speechSynthesis.cancel();
+      transition("listening");
+    }
+  } else if (type === "tts_stop") {
+    if (!pythonControlled) speechSynthesis.cancel();
+    transition("idle");
   } else if (type === "text") {
     console.log("[WhyJarv]", msg.text);
   } else if (type === "task_spawned") {
@@ -377,11 +400,62 @@ socket.onMessage((msg) => {
 // Kick off
 // ---------------------------------------------------------------------------
 
-// Start listening after a brief delay for the orb to render
+// Start in idle — nessun suono, nessun greeting. Aspetta wake word.
 setTimeout(() => {
   voiceInput.start();
-  transition("listening");
+  transition("idle");
 }, 1000);
+
+// ── Clap detection ──────────────────────────────────────────────────────────
+// Due clap (picchi di ampiezza) entro 800ms attivano WhyJarv
+(function initClapDetection() {
+  navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    .then(stream => {
+      const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const src = ac.createMediaStreamSource(stream);
+      const analyser = ac.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.1;  // reattivo
+      src.connect(analyser);
+
+      const buf = new Float32Array(analyser.fftSize);
+      let lastClapTime = 0;
+      let clapCount = 0;
+      let inPeak = false;
+      const THRESHOLD = 0.18;   // ampiezza minima per clap
+      const WINDOW_MS = 900;    // finestra tra i due clap
+
+      function tick() {
+        requestAnimationFrame(tick);
+        if (isAwake) { clapCount = 0; return; }  // già sveglio
+
+        analyser.getFloatTimeDomainData(buf);
+        let peak = 0;
+        for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]));
+
+        if (peak > THRESHOLD && !inPeak) {
+          inPeak = true;
+          const now = performance.now();
+          if (now - lastClapTime < WINDOW_MS) {
+            clapCount++;
+            if (clapCount >= 2) {
+              // Due clap rilevati → attiva
+              clapCount = 0;
+              isAwake = true;
+              transition("listening");
+            }
+          } else {
+            clapCount = 1;
+          }
+          lastClapTime = now;
+        } else if (peak < THRESHOLD * 0.4) {
+          inPeak = false;
+        }
+      }
+      tick();
+    })
+    .catch(() => {});
+})();
 
 // Resume AudioContext on ANY user interaction (browser autoplay policy)
 function ensureAudioContext() {

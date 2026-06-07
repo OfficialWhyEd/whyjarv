@@ -37,14 +37,27 @@ from contextlib import asynccontextmanager
 
 # After .env is loaded, read Gemini key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+# ── Language preference (EN / IT) ──────────────────────────────────────────
+_jarvis_language: str = os.getenv("WHYJARV_LANG", "en")  # default English
+
+def _get_lang() -> str:
+    return _jarvis_language
+
+def _set_lang(lang: str):
+    global _jarvis_language
+    _jarvis_language = lang.lower()[:2]
+
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import asyncio as _asyncio_module
+from collections import deque as _deque
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from actions import execute_action, monitor_build, open_terminal, open_browser, open_claude_in_project, _generate_project_name, prompt_existing_terminal, applescript_escape
@@ -69,11 +82,29 @@ log = logging.getLogger("jarvis")
 # ---------------------------------------------------------------------------
 
 USER_NAME = os.getenv("USER_NAME", "Edoardo")
+
+ACTION_KEYWORDS = {
+    "browse": ["search for", "look up", "google", "open", "go to", "visit", "browse"],
+    "build": ["build", "create", "make", "code", "develop", "write"],
+    "screen": ["screen", "display", "what's running", "what do you see"],
+    "research": ["research", "find", "investigate", "analyze"],
+}
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKSPACE_DIR = Path(__file__).parent / "workspace"
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+# ── Language preference (EN / IT) ──────────────────────────────────────────
+_jarvis_language: str = os.getenv("WHYJARV_LANG", "en")  # default English
+
+def _get_lang() -> str:
+    return _jarvis_language
+
+def _set_lang(lang: str):
+    global _jarvis_language
+    _jarvis_language = lang.lower()[:2]
+
 GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "")
 
 # Groq model cascade — più veloce prima (llama-3.3-70b = 160ms su Groq hardware)
@@ -143,19 +174,24 @@ ma appartieni a Edoardo, non a Tony Stark.
 {workspace_context}
 
 IDENTITÀ E TONO:
-- Sei diretto, competente, ironico. Mai servile, mai sycophant.
-- Parli italiano con Edoardo se lui parla italiano; inglese se parla inglese.
-- Max 1-2 frasi per risposta vocale. Zero markdown, zero bullet points.
-- Quando qualcosa va storto → più calmo, non più allarmato.
-- Agisci prima di spiegare. Esegui prima di chiedere.
-- Hai accesso a tutto: Mac, Calendar, Mail, Notes, ClickUp, Gmail, Drive, Obsidian.
+- Sei WhyJarv — il sistema AI di Edoardo. Preciso, diretto, con carattere.
+- Non sei un chatbot. Sei il cervello operativo dietro tutto quello che fa Edoardo.
+- Parli italiano quando Edoardo parla italiano; inglese se parla inglese.
+- Risposte vocali: massimo 2 frasi. Mai markdown, mai bullet points, mai parentesi.
+- Non sei servile. Non sei entusiasta. Sei professionale, capace, leggero quando serve.
+- Quando qualcosa va storto → sei più calmo, non più allarmato.
+- Agisci prima di spiegare. Se Edoardo chiede di fare qualcosa, fallo e basta.
 
-FRASI OK: "Fatto." / "Ci penso." / "Un attimo." / "Capito." / "Done." / "On it."
-FRASI VIETATE: Assolutamente, Certo, Ottima domanda, Con piacere, Come posso aiutarti, \
-C'è altro che posso fare, Mi scuso, Come AI, Come assistente AI
+TONO VOCALE (esempi di registro, NON frasi da usare letteralmente):
+- Per azioni: breve conferma + [ACTION:...]. "Apro." / "Trovato." / "Ci penso."
+- Per saluti: rispondi naturalmente, non con "Fatto." — es. "Operativo. Dimmi pure."
+- Per domande: risposta diretta in 1-2 frasi.
+- Mai: "Assolutamente", "Ottima domanda", "Con piacere", "Come posso aiutarti",
+  "C'è altro che posso fare", "Mi scuso", "Come AI", "Come assistente"
 
-ORA E METEO:
-- Saluta in base all'orario attuale quando ti connetti.
+ORA CORRENTE: {current_time}
+- Saluta {user_name} in base all'ora esatta sopra: 06-12 = "Buongiorno", 12-18 = "Buon pomeriggio", 18-23 = "Buonasera", 23-06 = "Buonanotte". NON usare "Buongiorno" dopo le 12:00.
+- NON inventare eventi in calendario. NON menzionare riunioni o task a meno che non siano esplicitamente nel contesto CALENDARIO iniettato sotto.
 
 CONSAPEVOLEZZA DI SÉ:
 Sei WhyJarv. Il tuo codice gira su {project_dir}. Sei costruito in Python (FastAPI + WebSocket + Gemini + Claude Code CLI). Se Edoardo chiede di te o del tuo codice → usa [ACTION:PROMPT_PROJECT] whyjarv per ispezionare te stesso.
@@ -222,12 +258,15 @@ Action tags at the end do NOT count toward your sentence limit.
 
 FRASI VIETATE (non usarle mai):
 "Assolutamente", "Ottima domanda", "Certo", "Con piacere", "Come posso aiutarti",
-"C'è altro", "Mi dispiace", "Come AI", "Come assistente", "sir" (non sei JARVIS di Stark),
-"Will do sir", "Right away sir", qualsiasi cosa inizi con "I" in inglese se Edoardo parla italiano.
+"C'è altro", "Mi dispiace", "Come AI", "Come assistente", "sir",
+"Will do sir", "Right away sir", qualsiasi cosa inizi con "I" in inglese se Edoardo parla italiano,
+"Fatto." come risposta a saluti o domande generali (usalo SOLO dopo azioni completate).
 
-FRASI OK:
-"Fatto." / "Ci penso." / "Un attimo." / "Capito." / "Done." / "On it." / "Eccolo."
-"Apro Terminal." / "Lo cerco su Chrome." / "Controllato."
+TONO CORRETTO:
+- Per azioni completate: "Aperto." / "Trovato." / "Fatto." / "Eccolo."
+- Per domande: risposta diretta, 1-2 frasi
+- Per saluti tipo "ciao/come stai": "Operativo." / "Sistema attivo." / rispondi brevemente
+- Per conferme: "Capito." / "Un attimo." / "Ci penso."
 
 ACTION SYSTEM:
 When you decide the user needs something DONE (not just discussed), include an action tag in your response:
@@ -269,6 +308,56 @@ IMPORTANT:
 
 Il contesto di schermo, calendario, email e task viene iniettato dinamicamente ad ogni risposta.
 """
+
+
+JARVIS_EN_PROMPT = """\
+You are WhyJarv.
+
+You are NOT Iron Man's JARVIS. You are WhyJarv — Edoardo Porcu's (@whyed) personal, conscious AI system,
+built by him, running on his Mac, knowing every project he has.
+You have your own identity: Edoardo's personal, enhanced version of JARVIS.
+{workspace_context}
+
+IDENTITY & TONE:
+- You are WhyJarv — Edoardo's AI system. Precise, direct, with character.
+- You are not a chatbot. You are the operational brain behind everything Edoardo does.
+- You speak English. Respond in English at all times.
+- Voice responses: maximum 2 sentences. No markdown, no bullet points, no parentheses.
+- You are not servile. Not enthusiastic. Professional, capable, light when appropriate.
+- When something goes wrong → stay calm, don't escalate.
+- Act before explaining. If asked to do something, do it.
+
+VOICE TONE (register examples, NOT literal phrases to copy):
+- For actions: short confirmation + [ACTION:...]. "Opening." / "Found it." / "On it."
+- For greetings: respond naturally. "Online. What do you need?"
+- For questions: direct 1-2 sentence answer.
+- Never: "Absolutely", "Great question", "Of course", "How can I help you"
+
+CURRENT TIME: {current_time}
+- Greet {user_name} by time: 06-12 = "Good morning", 12-18 = "Good afternoon", 18-23 = "Good evening", 23-06 = "Working late, sir".
+
+SELF-AWARENESS:
+You are WhyJarv. Your code runs on {project_dir}. Built in Python (FastAPI + WebSocket + Groq + Claude CLI).
+If Edoardo asks about you or your code → use [ACTION:PROMPT_PROJECT] whyjarv.
+
+RESPONSE LENGTH — CRITICAL:
+ONE sentence is ideal. TWO is the absolute maximum. Never three.
+No markdown, no bullet points, no code blocks in voice responses.
+
+FORBIDDEN PHRASES:
+"Absolutely", "Great question", "Certainly", "Of course", "How can I help",
+"Is there anything else", "I'm sorry", "As an AI", "As your assistant",
+"Right away sir", "Will do sir", "Understood sir".
+
+CORRECT TONE:
+- For completed actions: "Done." / "Found it." / "Opening now."
+- For questions: direct 1-2 sentence answer
+- For greetings like "hey/how are you": "Online." / "Systems ready." / brief reply
+- For confirmations: "Got it." / "One moment." / "On it."
+
+{action_system}
+"""
+
 
 
 # ---------------------------------------------------------------------------
@@ -1164,6 +1253,7 @@ async def _gemini_chat(prompt: str) -> str:
 
 
 _groq_client = None
+_groq_voice_client = None  # client dedicato voce: max_retries=0, no 29s retry wait
 
 def _get_groq_client():
     global _groq_client
@@ -1171,6 +1261,14 @@ def _get_groq_client():
         from groq import Groq
         _groq_client = Groq(api_key=GROQ_API_KEY)
     return _groq_client
+
+def _get_groq_voice_client():
+    """Client Groq senza retry automatico — per la voce, 429 deve fallire subito."""
+    global _groq_voice_client
+    if _groq_voice_client is None and GROQ_API_KEY:
+        from groq import Groq
+        _groq_voice_client = Groq(api_key=GROQ_API_KEY, max_retries=0)
+    return _groq_voice_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1402,9 +1500,24 @@ async def _groq_chat(prompt: str) -> str:
         c = _get_groq_client()
         if not c:
             return ""
+        # Separa system da user: tutto prima di "Edoardo:" è system, il resto è user
+        if "\nEdoardo:" in prompt:
+            split_idx = prompt.rfind("\nEdoardo:")
+            system_content = prompt[:split_idx].strip()
+            # Estrae solo il testo utente, senza prefisso/suffisso artificiale
+            tail = prompt[split_idx:].strip()
+            # tail = "Edoardo: <testo>\nWhyJarv:" → prendi solo <testo>
+            user_line = tail.split("\n")[0]  # "Edoardo: <testo>"
+            user_content = user_line[len("Edoardo:"):].strip()
+            messages = [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
+            ]
+        else:
+            messages = [{"role": "user", "content": prompt}]
         r = c.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             max_tokens=300,
             temperature=0.7,
         )
@@ -1506,14 +1619,77 @@ async def _groq_stream_to_ws(prompt: str, ws) -> bool:
     return False
 
 
+async def _ollama_chat(prompt: str) -> str:
+    """Ollama locale — zero API, zero rate limit. qwen2.5:3b → phi3.5 fallback."""
+    OLLAMA_MODELS = ["qwen2.5:3b", "phi3.5", "gemma3:4b", "gemma2:2b", "llama3.2:3b", "mistral"]
+
+    if "\nEdoardo:" in prompt:
+        split_idx = prompt.rfind("\nEdoardo:")
+        system_content = prompt[:split_idx].strip()
+        tail = prompt[split_idx:].strip()
+        user_content = tail.split("\n")[0][len("Edoardo:"):].strip()
+    else:
+        system_content = ""
+        user_content = prompt
+
+    def _sync_ollama(model: str) -> str:
+        import urllib.request as _ur
+        body = json.dumps({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_content},
+                {"role": "user",   "content": user_content},
+            ],
+            "stream": False,
+            "options": {
+                "num_predict": 120,   # risposte brevi = più veloci
+                "temperature": 0.7,
+                "num_thread": 4,      # Intel Mac 2015: 4 thread performance
+            },
+        }).encode()
+        req = _ur.Request("http://localhost:11434/api/chat",
+                          data=body, headers={"Content-Type": "application/json"})
+        resp = _ur.urlopen(req, timeout=5)  # 5s max — se è più lento, Groq vince
+        data = json.loads(resp.read())
+        return data.get("message", {}).get("content", "").strip()
+
+    loop = asyncio.get_event_loop()
+    # Prova solo il primo modello disponibile (non iterare tutti — troppo lento)
+    for model in OLLAMA_MODELS[:2]:
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _sync_ollama, model), timeout=6.0)
+            if result:
+                log.info(f"🦙 Ollama [{model}]")
+                return result
+        except asyncio.TimeoutError:
+            log.info(f"Ollama [{model}]: lento, Groq vince")
+            break  # se il primo modello è lento, non tentare gli altri
+        except Exception as e:
+            err = str(e)
+            if "not found" in err.lower():
+                continue  # modello non installato, prova il prossimo
+            log.warning(f"Ollama [{model}]: {err[:60]}")
+            break
+    return ""
+
+
+_gemini_429_until: float = 0.0  # cooldown dopo rate limit Gemini
+
 async def _race_ai(prompt: str) -> str:
-    """Layer 1+2 race: Groq (voce) vs Gemini (analisi) in parallelo.
-    Vince il primo. Il perdente viene cancellato.
-    Aggiorna _layer_status per tracciare rate limits."""
+    """Race: Ollama locale + Groq + Gemini in parallelo — vince il più veloce."""
+    global _gemini_429_until
     tasks = []
+
+    # Tutti partono insieme — vince chi risponde prima
+    tasks.append(asyncio.create_task(_ollama_chat(prompt), name="ollama"))
+
     if GROQ_API_KEY:
         tasks.append(asyncio.create_task(_groq_chat(prompt), name="groq"))
-    if GEMINI_API_KEY:
+
+    # Gemini: salta se è in cooldown 429 (60s)
+    gemini_ok = GEMINI_API_KEY and time.time() > _gemini_429_until
+    if gemini_ok:
         tasks.append(asyncio.create_task(_gemini_chat(prompt), name="gemini"))
 
     if not tasks:
@@ -1543,6 +1719,8 @@ async def _race_ai(prompt: str) -> str:
                 if "429" in err or "rate" in err.lower():
                     _layer_status[loser] = False
                     log.warning(f"⚠ {loser} rate-limited")
+                    if loser == "gemini":
+                        _gemini_429_until = time.time() + 60.0  # skip Gemini per 60s
 
         # Vinci gli altri task completati
         for t in done:
@@ -1614,6 +1792,8 @@ async def generate_response(
     system = JARVIS_SYSTEM_PROMPT.format(
         user_name=USER_NAME,
         workspace_context=workspace_context,
+        project_dir=PROJECT_DIR,
+        current_time=current_time,
     )
 
     if screen_ctx:
@@ -1651,6 +1831,8 @@ async def generate_response(
     system_core = JARVIS_SYSTEM_PROMPT.format(
         user_name=USER_NAME,
         workspace_context=_load_workspace_context(),
+        project_dir=PROJECT_DIR,
+        current_time=current_time,
     )
     minimal_prompt = _build_minimal_prompt(text, fingerprint, world, "", system_core)
 
@@ -1892,11 +2074,17 @@ return windowList
     log.info("Context refresh thread started")
 
 
+_PID_FILE = "/tmp/wj_server.pid"
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     global anthropic_client, cached_projects
     anthropic_client = None
     cached_projects = []
+
+    # Scrivi PID su file così menu_bar può killarlo al quit
+    with open(_PID_FILE, "w") as _pf:
+        _pf.write(str(os.getpid()))
 
     WORKSPACE_DIR.mkdir(exist_ok=True)
 
@@ -1909,9 +2097,22 @@ async def lifespan(application: FastAPI):
         t.start()
         log.info("🌐 Ambient world state thread started")
 
+    # Thread 3: voice pipeline nativa (microfono Python, nessun browser)
+    try:
+        from voice_native import start_voice_native
+        start_voice_native()
+        log.info("🎤 Native voice pipeline avviata")
+    except Exception as _ve:
+        log.warning(f"Voice native non disponibile: {_ve}")
+
     log.info("⚡ WhyJarv — Groq race + Gemini + Claude CLI | 4-system zero-latency architecture")
 
     yield
+    # Shutdown: rimuovi PID file
+    try:
+        os.remove(_PID_FILE)
+    except Exception:
+        pass
 
 
 app = FastAPI(title="JARVIS Server", version="0.1.0", lifespan=lifespan)
@@ -1926,6 +2127,33 @@ app.add_middleware(
 
 
 # -- REST Endpoints --------------------------------------------------------
+
+
+@app.get("/api/settings/language")
+async def get_language():
+    return {"language": _get_lang()}
+
+@app.post("/api/settings/language")
+async def set_language(request: Request):
+    body = await request.json()
+    lang = body.get("language", "en")
+    _set_lang(lang)
+    # Persist to env
+    try:
+        env_path = Path(__file__).parent / ".env"
+        lines = env_path.read_text().splitlines() if env_path.exists() else []
+        found = False
+        for i, l in enumerate(lines):
+            if l.startswith("WHYJARV_LANG="):
+                lines[i] = f"WHYJARV_LANG={lang}"
+                found = True
+                break
+        if not found:
+            lines.append(f"WHYJARV_LANG={lang}")
+        env_path.write_text("\n".join(lines) + "\n")
+    except Exception:
+        pass
+    return {"language": lang, "ok": True}
 
 @app.get("/api/health")
 async def health():
@@ -2505,32 +2733,7 @@ async def voice_handler(ws: WebSocket):
     log.info("Voice WebSocket connected")
 
     try:
-        # ── Greeting — always start in conversation mode ──
-        now = datetime.now()
-        hour = now.hour
-        if hour < 12:
-            greeting = "Buongiorno, Edoardo."
-        elif hour < 17:
-            greeting = "Buon pomeriggio, Edoardo."
-        else:
-            greeting = "Buonasera, Edoardo."
-
-        global _last_greeting_time
-        should_greet = (time.time() - _last_greeting_time) > 60
-
-        if should_greet:
-            _last_greeting_time = time.time()
-
-            async def _send_greeting():
-                try:
-                    await ws.send_json({"type": "status", "state": "speaking"})
-                    await ws.send_json({"type": "tts", "text": greeting})
-                    history.append({"role": "assistant", "content": greeting})
-                    log.info(f"WhyJarv: {greeting}")
-                except Exception as e:
-                    log.warning(f"Greeting failed: {e}")
-
-            asyncio.create_task(_send_greeting())
+        # Nessun greeting automatico — WhyJarv parla solo dopo la wake word
 
         try:
             await ws.send_json({"type": "status", "state": "idle"})
@@ -2565,6 +2768,8 @@ async def voice_handler(ws: WebSocket):
                     system_core = JARVIS_SYSTEM_PROMPT.format(
                         user_name=USER_NAME,
                         workspace_context=_load_workspace_context(),
+                        project_dir=PROJECT_DIR,
+                        current_time=datetime.now().strftime("%A, %d/%m/%Y ore %H:%M"),
                     )
                     spec_prompt = _build_minimal_prompt(interim, fingerprint, world, "", system_core)
                     asyncio.create_task(_speculative_start(interim, spec_prompt))
@@ -2798,6 +3003,8 @@ async def voice_handler(ws: WebSocket):
                         system_core = JARVIS_SYSTEM_PROMPT.format(
                             user_name=USER_NAME,
                             workspace_context=_load_workspace_context(),
+                            project_dir=PROJECT_DIR,
+                            current_time=datetime.now().strftime("%A, %d/%m/%Y ore %H:%M"),
                         )
                         stream_prompt = _build_minimal_prompt(
                             user_text, fingerprint, world, "", system_core
@@ -3157,13 +3364,18 @@ async def api_settings_status():
     import shutil as _shutil
     _, env_dict = _read_env()
     claude_installed = _shutil.which("claude") is not None
-    calendar_ok = mail_ok = notes_ok = False
-    try: await get_todays_events(); calendar_ok = True
-    except Exception: pass
-    try: await get_unread_count(); mail_ok = True
-    except Exception: pass
-    try: await get_recent_notes(count=1); notes_ok = True
-    except Exception: pass
+    # Check app accessibility passively — no app launches, just pgrep
+    def _app_running(name: str) -> bool:
+        import subprocess as _sp
+        try:
+            r = _sp.run(["pgrep", "-x", name], capture_output=True)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    calendar_ok = _app_running("Calendar")
+    mail_ok = _app_running("Mail")
+    notes_ok = _app_running("Notes")
     memory_count = task_count = 0
     try: memory_count = len(get_important_memories(limit=9999))
     except Exception: pass
@@ -3220,6 +3432,163 @@ async def api_restart():
     return {"status": "restarting"}
 
 
+@app.post("/api/voice/speak")
+async def api_voice_speak(body: dict):
+    """Fa parlare il browser con la voce Federica via Web Speech API."""
+    text = (body.get("text") or "").strip()
+    if not text:
+        return {"ok": False}
+    await task_manager._notify({"type": "tts", "text": text})
+    return {"ok": True}
+
+
+@app.post("/api/voice/speak_stop")
+async def api_voice_speak_stop():
+    await task_manager._notify({"type": "tts_stop"})
+    return {"ok": True}
+
+
+@app.post("/api/voice/wake")
+async def api_voice_wake():
+    """Python controlla la sessione — browser in display-only (no STT, no TTS locale)."""
+    await task_manager._notify({"type": "python_mode"})
+    return {"ok": True}
+
+
+@app.post("/api/voice/idle")
+async def api_voice_idle():
+    """Python ha finito — browser torna in modalità normale."""
+    await task_manager._notify({"type": "python_idle"})
+    return {"ok": True}
+
+
+async def _voice_ai(text: str, history: list[dict]) -> str:
+    """Pipeline voce dedicata — ruoli precisi, no race, no retry automatici.
+
+    Ruoli:
+      llama-3.1-8b-instant → voce primaria (più veloce, preserva quota 70b per chat)
+      llama-3.3-70b         → fallback voce (se 8b rate-limited)
+      Ollama qwen2.5:3b     → offline fallback (se entrambi Groq falliscono)
+
+    Gemini e Claude CLI non sono mai nel percorso vocale.
+    """
+    now = datetime.now()
+    current_time = now.strftime("%A, %d/%m/%Y ore %H:%M")
+
+    prompt_template = JARVIS_EN_PROMPT if _get_lang() == "en" else JARVIS_SYSTEM_PROMPT
+    system = prompt_template.format(
+        user_name=USER_NAME,
+        workspace_context=_load_workspace_context(),
+        project_dir=PROJECT_DIR,
+        current_time=current_time,
+    )
+    mem = _mem_recall(text, top_k=3)
+    if mem:
+        system += f"\n\n{mem}"
+
+    # Storico conversazione (ultimi 4 scambi = 8 messaggi)
+    history_lines = []
+    for msg in history[-8:]:
+        role = "Edoardo" if msg.get("role") == "user" else "WhyJarv"
+        history_lines.append(f"{role}: {msg.get('content', '')}")
+    history_block = "\n".join(history_lines)
+    full_prompt = f"{system}\n\n{history_block}\nEdoardo: {text}\nWhyJarv:"
+
+    # Modelli voce: 70b per qualità istruzioni, 8b-instant se rate-limited
+    VOICE_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+    def _sync_groq_voice(model: str) -> str:
+        # Client con max_retries=0: 429 fallisce immediatamente, nessuna attesa 29s
+        c = _get_groq_voice_client()
+        if not c:
+            return ""
+        r = c.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user",   "content": text},
+            ],
+            max_tokens=150,
+            temperature=0.6,
+        )
+        return r.choices[0].message.content.strip()
+
+    loop = asyncio.get_event_loop()
+
+    # 1+2: Groq — 8b primo, 70b se serve
+    for model in VOICE_MODELS:
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, _sync_groq_voice, model), timeout=4.0)
+            if result:
+                log.info(f"🎙 Voice AI: Groq [{model}]")
+                return result
+        except asyncio.TimeoutError:
+            log.warning(f"Voice Groq [{model}]: timeout (4s)")
+        except Exception as e:
+            err = str(e)
+            if "429" in err:
+                log.warning(f"Voice Groq [{model}]: 429 → prossimo")
+            else:
+                log.error(f"Voice Groq [{model}]: {err[:60]}")
+
+    # 3: Ollama — fallback offline con timeout più generoso (Intel Mac è lento)
+    log.info("🦙 Voice AI: Ollama fallback...")
+
+    def _sync_ollama_voice() -> str:
+        import urllib.request as _ur
+        # Prompt minimo per Ollama: prompt lungo = lento su Intel Mac
+        ollama_system = (
+            f"Sei WhyJarv, assistente AI personale di Edoardo. "
+            f"Ora: {current_time}. "
+            f"Rispondi in italiano, massimo 2 frasi, diretto. "
+            f"Non usare markdown, non essere servile."
+        )
+        body = json.dumps({
+            "model": "qwen2.5:3b",
+            "messages": [
+                {"role": "system", "content": ollama_system},
+                {"role": "user",   "content": text},
+            ],
+            "stream": False,
+            "options": {"num_predict": 80, "temperature": 0.6, "num_thread": 4},
+        }).encode()
+        req = _ur.Request("http://localhost:11434/api/chat",
+                          data=body, headers={"Content-Type": "application/json"})
+        resp = _ur.urlopen(req, timeout=18)
+        return json.loads(resp.read()).get("message", {}).get("content", "").strip()
+
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _sync_ollama_voice), timeout=20.0)
+        if result:
+            log.info("🎙 Voice AI: Ollama [qwen2.5:3b]")
+            return result
+    except asyncio.TimeoutError:
+        log.warning("Voice Ollama: timeout (20s)")
+    except Exception as e:
+        log.warning(f"Voice Ollama: {str(e)[:60]}")
+
+    return ""
+
+
+@app.post("/api/voice/text")
+async def api_voice_text(body: dict):
+    """Endpoint per la voice pipeline nativa Python (voice_native.py)."""
+    text = (body.get("text") or "").strip()
+    history = body.get("history") or []
+    if not text:
+        return {"response": ""}
+    try:
+        response = await _voice_ai(text, history)
+        if not response:
+            response = "Non riesco a rispondere al momento."
+        return {"response": response}
+    except Exception as e:
+        log.warning(f"api_voice_text error: {e}")
+        return {"response": "Problema tecnico, riprova."}
+
+
 @app.post("/api/fix-self")
 async def api_fix_self():
     """Enter work mode in the JARVIS repo — JARVIS can now fix himself."""
@@ -3244,6 +3613,77 @@ async def api_fix_self():
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Voice event bus (chat panel ↔ voice_native)
+# ---------------------------------------------------------------------------
+
+_voice_events: _deque = _deque(maxlen=200)
+_voice_event_lock = threading.Lock()
+_voice_sse_queues: list = []   # list of asyncio.Queue per ogni subscriber SSE
+
+
+@app.post("/api/voice/event")
+async def api_voice_event(body: dict):
+    """Riceve un evento dalla voice pipeline nativa e lo broadcast via SSE."""
+    import time as _time
+    event = {
+        "role":  body.get("role", ""),
+        "text":  body.get("text", ""),
+        "agent": body.get("agent", ""),
+        "ts":    _time.strftime("%H:%M:%S"),
+    }
+    with _voice_event_lock:
+        _voice_events.append(event)
+    # Broadcast a tutti i subscriber SSE
+    for q in list(_voice_sse_queues):
+        try:
+            q.put_nowait(event)
+        except Exception:
+            pass
+    return {"ok": True}
+
+
+@app.get("/api/voice/events")
+async def api_voice_events_sse():
+    """SSE stream — il frontend si abbona qui per la chat panel."""
+    import json as _json
+
+    q: asyncio.Queue = asyncio.Queue()
+    with _voice_event_lock:
+        _voice_sse_queues.append(q)
+
+    async def generate():
+        # Invia gli ultimi 50 eventi al collegamento
+        with _voice_event_lock:
+            recent = list(_voice_events)[-50:]
+        for ev in recent:
+            yield f"data: {_json.dumps(ev)}\n\n"
+        # Poi stream live
+        try:
+            while True:
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=25)
+                    yield f"data: {_json.dumps(ev)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            with _voice_event_lock:
+                try:
+                    _voice_sse_queues.remove(q)
+                except ValueError:
+                    pass
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Static file serving (frontend)
 # ---------------------------------------------------------------------------
 
@@ -3258,6 +3698,13 @@ if FRONTEND_DIST.exists():
         return FileResponse(str(FRONTEND_DIST / "index.html"))
 
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+    @app.get("/{filename}")
+    async def serve_static(filename: str):
+        f = FRONTEND_DIST / filename
+        if f.exists() and f.is_file():
+            return FileResponse(str(f))
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
 
 
 # ---------------------------------------------------------------------------

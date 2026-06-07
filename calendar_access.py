@@ -142,7 +142,6 @@ def _parse_applescript_date(s: str) -> datetime | None:
 async def refresh_cache():
     """Refresh the event cache. Called from background loop."""
     global _event_cache, _cache_time, USER_CALENDARS, _auto_discovered
-    await _ensure_calendar_running()
 
     # Auto-discover calendars if none configured
     if not USER_CALENDARS and not _auto_discovered:
@@ -208,7 +207,6 @@ async def get_next_event() -> dict | None:
 
 async def get_calendar_names() -> list[str]:
     """Get list of all calendar names."""
-    await _ensure_calendar_running()
     try:
         proc = await asyncio.create_subprocess_exec(
             "osascript", "-e",
